@@ -3,12 +3,15 @@ import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { Page, Game } from '../types';
 
+import rouletteIconImg from '../assets/images/roulette_icon.jpg';
+import slotIconImg from '../assets/images/slot_icon.jpg';
+
 const games: Game[] = [
   {
     id: 'roulette',
     title: 'EUROPEAN ROULETTE',
     description: 'High-end 3D European roulette wheel',
-    image: './images/roulette_icon.jpg',
+    image: rouletteIconImg,
     minBet: 50,
     maxBet: 10000,
     type: 'live',
@@ -19,7 +22,7 @@ const games: Game[] = [
     id: 'slots',
     title: 'NOCTURNAL SLOTS',
     description: 'Immersive 3D slots with Progressive Jackpots',
-    image: './images/slot_icon.jpg',
+    image: slotIconImg,
     minBet: 10,
     maxBet: 500,
     type: 'slot',
