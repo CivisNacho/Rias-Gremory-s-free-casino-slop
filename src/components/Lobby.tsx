@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { Page, Game } from '../types';
 
-import rouletteIconImg from '../assets/images/thumb_1.jpg';
+import rouletteIconImg from 'public/images/roulette_icon.jpg';
 import slotIconImg from '../assets/images/thumb_2.jpg';
 
 const games: Game[] = [
