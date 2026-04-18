@@ -24,9 +24,9 @@ import { motion, AnimatePresence, useAnimation } from 'motion/react';
 import { cn, formatCurrency } from '../lib/utils';
 import confetti from 'canvas-confetti';
 
-import riasBestLuckImg from '../assets/images/rias_best_luck.jpg';
-import riasLuckyImg from '../assets/images/rias_lucky.jpg';
-import riasNormalImg from '../assets/images/rias_normal.webp';
+import riasBestLuckImg from '../assets/images/avatar_1.jpg';
+import riasLuckyImg from '../assets/images/avatar_2.jpg';
+import riasNormalImg from '../assets/images/avatar_3.webp';
 import { RoulettePlayer } from '../lib/rouletteUtils';
 
 // --- Constants ---
