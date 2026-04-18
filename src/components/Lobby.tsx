@@ -8,7 +8,7 @@ const games: Game[] = [
     id: 'roulette',
     title: 'EUROPEAN ROULETTE',
     description: 'High-end 3D European roulette wheel',
-    image: 'public/images/roulette_icon.jpg',
+    image: 'https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/refs/heads/main/public/images/roulette_icon.jpg',
     minBet: 50,
     maxBet: 10000,
     type: 'live',
