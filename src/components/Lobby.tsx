@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { Page, Game } from '../types';
 
-import rouletteIconImg from 'public/images/roulette_icon.jpg';
+import rouletteIconImg from 'https://github.com/CivisNacho/Rias-Gremory-s-free-casino-slop/blob/96308d1484ba0c9f291d1dc8d305121a87c9f737/public/images/roulette_icon.jpg';
 import slotIconImg from '../assets/images/thumb_2.jpg';
 
 const games: Game[] = [
