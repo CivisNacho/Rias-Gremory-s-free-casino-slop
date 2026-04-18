@@ -518,7 +518,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                              
                              <div className="aspect-[3/4] rounded-2xl overflow-hidden mb-6 border border-red-500/20 shadow-[0_0_30px_rgba(255,42,42,0.2)]">
                                 <img 
-                                   src={luckLevel === 'luckiest' ? "./images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "./images/rias_lucky.jpg" : "./images/rias_normal.webp"} 
+                                   src={luckLevel === 'luckiest' ? "/images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "/images/rias_lucky.jpg" : "/images/rias_normal.webp"} 
                                    alt="Rias Gremory" 
                                    referrerPolicy="no-referrer"
                                    className="w-full h-full object-cover transition-all duration-700 group-hover:scale-110" 
