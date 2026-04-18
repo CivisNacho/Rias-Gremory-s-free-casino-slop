@@ -3,15 +3,12 @@ import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { Page, Game } from '../types';
 
-import rouletteIconImg from './public/images/roulette_icon.jpg';
-import slotIconImg from '../assets/images/thumb_2.jpg';
-
 const games: Game[] = [
   {
     id: 'roulette',
     title: 'EUROPEAN ROULETTE',
     description: 'High-end 3D European roulette wheel',
-    image: rouletteIconImg,
+    image: 'public/images/roulette_icon.jpg',
     minBet: 50,
     maxBet: 10000,
     type: 'live',
@@ -22,7 +19,7 @@ const games: Game[] = [
     id: 'slots',
     title: 'NOCTURNAL SLOTS',
     description: 'Immersive 3D slots with Progressive Jackpots',
-    image: slotIconImg,
+    image: 'public/images/slot_icon.jpg',
     minBet: 10,
     maxBet: 500,
     type: 'slot',
@@ -39,7 +36,7 @@ export const Lobby = ({ onNavigate }: { onNavigate: (p: Page) => void }) => {
       <div className="flex justify-between items-end border-b border-outline-variant/5 pb-8">
         <div>
           <h2 className="font-headline text-5xl font-black text-on-surface uppercase tracking-tight">CURATED <span className="text-secondary italic">SELECTION</span></h2>
-          <p className="text-on-surface/30 text-[10px] mt-3 uppercase tracking-[0.3em] font-black">The finest high-stakes experiences, reserved for Rias Gremory's casino slop.</p>
+          <p className="text-on-surface/30 text-[10px] mt-3 uppercase tracking-[0.3em] font-black">The finest high-stakes experiences, reserved for Rias Gremori's selection.</p>
         </div>
         <div className="flex items-center gap-2 text-secondary text-[10px] font-black tracking-[0.2em] uppercase">
           <ChevronRight size={14} /> Active Game

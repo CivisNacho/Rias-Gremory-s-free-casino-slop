@@ -23,10 +23,6 @@ import {
 import { motion, AnimatePresence, useAnimation } from 'motion/react';
 import { cn, formatCurrency } from '../lib/utils';
 import confetti from 'canvas-confetti';
-
-import riasBestLuckImg from '../assets/images/avatar_1.jpg';
-import riasLuckyImg from '../assets/images/avatar_2.jpg';
-import riasNormalImg from '../assets/images/avatar_3.webp';
 import { RoulettePlayer } from '../lib/rouletteUtils';
 
 // --- Constants ---
@@ -522,7 +518,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                              
                              <div className="aspect-[3/4] rounded-2xl overflow-hidden mb-6 border border-red-500/20 shadow-[0_0_30px_rgba(255,42,42,0.2)]">
                                 <img 
-                                   src={luckLevel === 'luckiest' ? riasBestLuckImg : luckLevel === 'lucky' ? riasLuckyImg : riasNormalImg} 
+                                   src={luckLevel === 'luckiest' ? "/images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "/images/rias_lucky.jpg" : "/images/rias_normal.webp"} 
                                    alt="Rias Gremory" 
                                    referrerPolicy="no-referrer"
                                    className="w-full h-full object-cover transition-all duration-700 group-hover:scale-110" 

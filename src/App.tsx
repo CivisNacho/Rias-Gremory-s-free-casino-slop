@@ -56,7 +56,7 @@ export default function App() {
             onClick={() => setCurrentPage('lobby')}
             className="text-2xl font-black italic text-secondary uppercase tracking-tighter mr-8 cursor-pointer hover:opacity-80 transition-opacity font-lobster"
           >
-            Rias Gremory's <span className="text-white">casino slop</span>
+            Rias Gremori's <span className="text-white">Free Casino</span>
           </div>
         </div>
 
@@ -151,7 +151,7 @@ export default function App() {
               {/* Universal Footer */}
               <footer className="w-full py-16 px-12 border-t border-outline-variant/10 flex flex-col items-center justify-center space-y-8 bg-surface-container-low/50 mt-auto">
                 <div className="text-secondary opacity-50 font-lobster font-black italic text-2xl uppercase tracking-[0.2em]">
-                  Rias Gremory's casino slop
+                  Rias Gremori's Free Casino
                 </div>
                 <div className="flex flex-wrap justify-center gap-x-12 gap-y-4 font-body text-[10px] uppercase tracking-widest font-bold text-on-surface/30">
                   <a href="#" className="hover:text-secondary transition-colors underline underline-offset-8 decoration-outline-variant/30">Support</a>
