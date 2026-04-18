@@ -27,10 +27,10 @@ export const BettingBoard: React.FC<BettingBoardProps> = ({
 
         return (
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 
-                            w-8 h-8 rounded-full flex items-center justify-center
-                            shadow bg-white pointer-events-none z-10 border-4"
+                            w-5 h-5 md:w-8 md:h-8 rounded-full flex items-center justify-center
+                            shadow bg-white pointer-events-none z-10 border-2 md:border-4"
                  style={{ borderColor: color }}>
-                <span className="text-black font-bold text-xs">{total}</span>
+                <span className="text-black font-bold text-[8px] md:text-xs">{total}</span>
             </div>
         );
     };
@@ -47,14 +47,14 @@ export const BettingBoard: React.FC<BettingBoardProps> = ({
     const allRows = [row1, row2, row3];
 
     return (
-        <div className="w-full max-w-4xl mx-auto select-none bg-red-950 p-4 rounded-[16px] shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] overflow-x-auto border border-red-900/50">
-            <div className="min-w-[700px] flex flex-col gap-1">
+        <div className="w-full max-w-4xl mx-auto select-none bg-red-950 p-2 md:p-4 rounded-[16px] shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] border border-red-900/50">
+            <div className="w-full flex flex-col gap-1">
                 
                 {/* Top Section: 0, Numbers, 2:1 */}
-                <div className="flex gap-1 h-36">
+                <div className="flex gap-1 h-24 md:h-36">
                     {/* ZERO */}
                     <div 
-                        className="w-12 border-2 border-[#facc15]/40 rounded-l-full flex items-center justify-center cursor-pointer hover:bg-[#facc15]/20 relative text-[#facc15] font-black text-xl hover:shadow-[0_0_15px_rgba(250,204,21,0.5)] transition-all"
+                        className="w-8 md:w-12 border-2 border-[#facc15]/40 rounded-l-full flex items-center justify-center cursor-pointer hover:bg-[#facc15]/20 relative text-[#facc15] font-black text-xs md:text-xl hover:shadow-[0_0_15px_rgba(250,204,21,0.5)] transition-all"
                         onClick={() => handleBet('STRAIGHT', [0])}
                     >
                         0
@@ -70,7 +70,7 @@ export const BettingBoard: React.FC<BettingBoardProps> = ({
                                     return (
                                         <div 
                                             key={num} 
-                                            className={`flex-1 border border-red-900/40 flex items-center justify-center cursor-pointer relative text-white font-black text-lg hover:shadow-[inset_0_0_15px_rgba(255,42,42,0.8)] transition-all
+                                            className={`flex-1 border border-red-900/40 flex items-center justify-center cursor-pointer relative text-white font-black text-xs md:text-lg hover:shadow-[inset_0_0_15px_rgba(255,42,42,0.8)] transition-all
                                                 ${col === 'red' ? 'bg-red-800' : 'bg-black'}
                                             `}
                                             onClick={() => handleBet('STRAIGHT', [num])}
@@ -85,10 +85,10 @@ export const BettingBoard: React.FC<BettingBoardProps> = ({
                     </div>
 
                     {/* 2:1 COLUMNS */}
-                    <div className="w-16 flex flex-col gap-1">
+                    <div className="w-8 md:w-16 flex flex-col gap-1">
                         {allRows.map((row, idx) => (
                             <div key={idx} 
-                                className="flex-1 border-2 border-red-900/60 flex items-center justify-center cursor-pointer hover:bg-red-900/40 relative text-[#facc15] font-black text-sm tracking-tighter"
+                                className="flex-1 border-2 border-red-900/60 flex items-center justify-center cursor-pointer hover:bg-red-900/40 relative text-[#facc15] font-black text-[9px] md:text-sm tracking-tighter"
                                 onClick={() => handleBet('COLUMN', row)}
                             >
                                 2:1
@@ -99,14 +99,14 @@ export const BettingBoard: React.FC<BettingBoardProps> = ({
                 </div>
 
                 {/* DOZENS */}
-                <div className="flex gap-1 h-12 ml-12 mr-16">
+                <div className="flex gap-1 h-10 md:h-12 ml-8 md:ml-12 mr-8 md:mr-16">
                     { [
                         { label: '1st 12', nums: Array.from({length:12}, (_, i)=>i+1) },
                         { label: '2nd 12', nums: Array.from({length:12}, (_, i)=>i+13) },
                         { label: '3rd 12', nums: Array.from({length:12}, (_, i)=>i+25) }
                     ].map(dozen => (
                         <div key={dozen.label}
-                            className="flex-1 border-2 border-red-900/60 flex items-center justify-center cursor-pointer hover:bg-red-900/40 relative text-white font-black tracking-widest text-[11px] uppercase transition-colors"
+                            className="flex-1 border-2 border-red-900/60 flex items-center justify-center cursor-pointer hover:bg-red-900/40 relative text-white font-black tracking-tighter md:tracking-widest text-[9px] md:text-[11px] uppercase transition-colors"
                             onClick={() => handleBet('DOZEN', dozen.nums)}
                         >
                             {dozen.label}
@@ -116,7 +116,7 @@ export const BettingBoard: React.FC<BettingBoardProps> = ({
                 </div>
 
                 {/* BOTTOM OUTSIDES */}
-                <div className="flex gap-1 h-16 ml-12 mr-16">
+                <div className="flex gap-1 h-12 md:h-16 ml-8 md:ml-12 mr-8 md:mr-16">
                     {[
                         { label: '1 TO 18', type: 'HALF' as BetType, nums: Array.from({length:18}, (_, i)=>i+1) },
                         { label: 'EVEN', type: 'PARITY' as BetType, nums: Array.from({length:18}, (_, i)=>(i+1)*2) },
@@ -126,7 +126,7 @@ export const BettingBoard: React.FC<BettingBoardProps> = ({
                         { label: '19 TO 36', type: 'HALF' as BetType, nums: Array.from({length:18}, (_, i)=>i+19) },
                     ].map(out => (
                         <div key={out.label}
-                            className={`flex-1 border-2 border-red-900/60 flex items-center justify-center cursor-pointer hover:bg-red-900/60 relative text-white font-black tracking-widest text-[11px] transition-colors ${out.bg || ''}`}
+                            className={`flex-1 border-2 border-red-900/60 flex items-center justify-center cursor-pointer hover:bg-red-900/60 relative text-white font-black tracking-tighter md:tracking-widest text-[8px] md:text-[11px] transition-colors leading-[0.9] text-center p-1 ${out.bg || ''}`}
                             onClick={() => handleBet(out.type, out.nums)}
                         >
                             {out.bg ? '' : out.label}

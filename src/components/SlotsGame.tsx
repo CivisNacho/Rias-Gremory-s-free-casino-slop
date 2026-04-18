@@ -20,7 +20,7 @@ import {
   BarChart3,
   Download
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useAnimation } from 'motion/react';
 import { cn, formatCurrency } from '../lib/utils';
 import confetti from 'canvas-confetti';
 import { RoulettePlayer } from '../lib/rouletteUtils';
@@ -45,6 +45,123 @@ const BONUS_OBJECTS = [
 
 const GRID_ROWS = 3;
 const GRID_COLS = 5;
+
+// --- Audio Engine ---
+const useSlotsAudio = () => {
+    const audioCtx = useRef<AudioContext | null>(null);
+
+    const init = useCallback(() => {
+        if (!audioCtx.current) {
+            audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        if (audioCtx.current.state === 'suspended') {
+            audioCtx.current.resume();
+        }
+    }, []);
+
+    const playTone = useCallback((freq: number, type: OscillatorType, duration: number, vol: number) => {
+        if (!audioCtx.current) return;
+        const osc = audioCtx.current.createOscillator();
+        const gain = audioCtx.current.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.current.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.current.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.current.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.current.destination);
+        osc.start();
+        osc.stop(audioCtx.current.currentTime + duration);
+    }, []);
+
+    const playTick = useCallback(() => {
+        playTone(600, 'square', 0.05, 0.01);
+    }, [playTone]);
+
+    const playThud = useCallback(() => {
+        if (!audioCtx.current) return;
+        const osc = audioCtx.current.createOscillator();
+        const gain = audioCtx.current.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(100, audioCtx.current.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(30, audioCtx.current.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.5, audioCtx.current.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.current.currentTime + 0.15);
+        osc.connect(gain);
+        gain.connect(audioCtx.current.destination);
+        osc.start();
+        osc.stop(audioCtx.current.currentTime + 0.15);
+    }, []);
+
+    const playWinChime = useCallback(() => {
+        if (!audioCtx.current) return;
+        [440, 554, 659, 880, 1108].forEach((freq, i) => {
+            setTimeout(() => {
+                playTone(freq, 'sine', 0.6, i === 4 ? 0.3 : 0.1);
+            }, i * 150);
+        });
+    }, [playTone]);
+
+    return useMemo(() => ({ init, playTick, playThud, playWinChime }), [init, playTick, playThud, playWinChime]);
+};
+
+// --- 3D Reel Component ---
+const Reel3D = ({ isSpinning, symbols }: { isSpinning: boolean, symbols: any[] }) => {
+    const controls = useAnimation();
+    const [faces, setFaces] = useState<any[]>(() => {
+        const arr = Array(10).fill(null).map(()=> SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)]);
+        if (symbols && symbols.length === 3) {
+            arr[9] = symbols[0];
+            arr[0] = symbols[1];
+            arr[1] = symbols[2];
+        }
+        return arr;
+    });
+
+    useEffect(() => {
+        if (isSpinning) {
+            controls.start({
+                rotateX: [0, -360],
+                transition: { repeat: Infinity, duration: 0.35, ease: 'linear' }
+            });
+        } else {
+            setFaces(prev => {
+                const next = [...prev];
+                if (symbols && symbols.length === 3) {
+                    next[9] = symbols[0]; // Top
+                    next[0] = symbols[1]; // Mid
+                    next[1] = symbols[2]; // Bot
+                }
+                return next;
+            });
+            controls.start({
+                rotateX: [-144, 0], // Snap smoothly
+                transition: { type: 'spring', damping: 14, stiffness: 120 }
+            });
+        }
+    }, [isSpinning, symbols, controls]);
+
+    return (
+        <div className="h-full w-full relative flex items-center justify-center pointer-events-none" style={{ perspective: '1200px' }}>
+            <motion.div
+                animate={controls}
+                style={{ transformStyle: 'preserve-3d' }}
+                className="absolute w-full h-[80px]"
+            >
+                {faces.map((sym, i) => (
+                    <div
+                        key={i}
+                        className="absolute left-0 right-0 h-[80px] flex items-center justify-center"
+                        style={{ transform: `rotateX(${i * 36}deg) translateZ(135px)`, backfaceVisibility: 'hidden' }}
+                    >
+                        <div className="w-[70px] h-[70px] lg:w-[80px] lg:h-[80px] bg-gradient-to-br from-white/10 to-transparent border border-white/15 rounded-full flex items-center justify-center relative shadow-[inset_0_4px_15px_rgba(255,255,255,0.15)] bg-black/60 backdrop-blur-md">
+                            <sym.icon size={32} className="relative z-10 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]" style={{ color: sym.color }} />
+                        </div>
+                    </div>
+                ))}
+            </motion.div>
+        </div>
+    )
+};
 
 // --- Sub-Components ---
 
@@ -169,6 +286,10 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
     const [playerWins, setPlayerWins] = useState<Record<string, number>>({});
 
     const [isAutoSpinning, setIsAutoSpinning] = useState(false);
+    const [spinningReels, setSpinningReels] = useState<boolean[]>([false, false, false, false, false]);
+    
+    const audio = useSlotsAudio();
+    const spinIntervalRef = useRef<any>(null);
 
     const occupiedCharms = useMemo(() => Object.values(playerCharms), [playerCharms]);
 
@@ -198,6 +319,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
 
     const startSpin = useCallback(() => {
         if (reelStatus === 'spinning') return;
+        audio.init();
         
         // Simultaneous Bet: All players bet!
         const playersWhoCanBet = players.filter((p: any) => p.balance >= selectedBet);
@@ -235,37 +357,59 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         }));
 
         setReelStatus('spinning');
+        setSpinningReels([true, true, true, true, true]);
         setWinMessage("");
         setLastWin(0);
         setPlayerWins({});
 
-        // Spin logic simulation
-        setTimeout(() => {
-            const newGrid = Array.from({ length: GRID_ROWS }, () => 
-                Array.from({ length: GRID_COLS }, () => SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)])
-            );
+        // Calculate NEW GRID immediately for logic
+        const newGrid = Array.from({ length: GRID_ROWS }, () => 
+            Array.from({ length: GRID_COLS }, () => SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)])
+        );
 
-            // Luck manipulation
-            if (finalLuck === 'lucky' || finalLuck === 'luckiest') {
-                const boostChance = finalLuck === 'luckiest' ? 0.7 : 0.4;
-                if (Math.random() < boostChance) {
-                    const winSym = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-                    const targetRow = Math.floor(Math.random() * GRID_ROWS);
-                    newGrid[targetRow][0] = winSym;
-                    newGrid[Math.floor(Math.random() * GRID_ROWS)][1] = winSym;
-                    newGrid[Math.floor(Math.random() * GRID_ROWS)][2] = winSym;
-                    
-                    if (finalLuck === 'luckiest' && Math.random() < 0.5) {
-                        newGrid[Math.floor(Math.random() * GRID_ROWS)][3] = winSym;
-                    }
+        // Luck manipulation
+        if (finalLuck === 'lucky' || finalLuck === 'luckiest') {
+            const boostChance = finalLuck === 'luckiest' ? 0.7 : 0.4;
+            if (Math.random() < boostChance) {
+                const winSym = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
+                const targetRow = Math.floor(Math.random() * GRID_ROWS);
+                newGrid[targetRow][0] = winSym;
+                newGrid[Math.floor(Math.random() * GRID_ROWS)][1] = winSym;
+                newGrid[Math.floor(Math.random() * GRID_ROWS)][2] = winSym;
+                
+                if (finalLuck === 'luckiest' && Math.random() < 0.5) {
+                    newGrid[Math.floor(Math.random() * GRID_ROWS)][3] = winSym;
                 }
             }
+        }
 
-            setGrid(newGrid);
-            setReelStatus('stopped');
-            calculateWin(newGrid);
-        }, 1500);
-    }, [reelStatus, players, selectedBet, luckLevel, luckDuration, playerCharms]);
+        setGrid(newGrid);
+
+        // Spin audio
+        if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
+        spinIntervalRef.current = setInterval(() => audio.playTick(), 60);
+
+        // Cascade Stop Logic
+        setTimeout(() => {
+            [0, 1, 2, 3, 4].forEach(colIndex => {
+                setTimeout(() => {
+                    setSpinningReels(prev => {
+                        const next = [...prev];
+                        next[colIndex] = false;
+                        return next;
+                    });
+                    audio.playThud();
+                    
+                    if (colIndex === 4) {
+                        clearInterval(spinIntervalRef.current);
+                        setReelStatus('stopped');
+                        calculateWin(newGrid);
+                    }
+                }, colIndex * 250); // Cascade stop: 0ms, 250ms, 500ms...
+            });
+        }, 1200); // 1.2s spin duration before stopping sequence begins
+
+    }, [reelStatus, players, selectedBet, luckLevel, luckDuration, playerCharms, audio]);
 
     // Auto Spin Effect
     useEffect(() => {
@@ -335,6 +479,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                 balance: p.balance + (newPlayerWins[p.id] || 0)
             })));
             
+            audio.playWinChime();
             triggerConfetti();
         }
     };
@@ -345,43 +490,6 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
 
     return (
         <div className="flex-1 flex flex-col bg-black h-full overflow-hidden font-sans text-white">
-            {/* --- Global Header --- */}
-            <header className="h-16 shrink-0 flex items-center justify-between px-8 border-b border-red-900/40 bg-black/80 backdrop-blur-md z-50 shadow-[0_4px_30px_rgba(255,0,0,0.1)]">
-                <div className="flex items-center gap-8">
-                    <button onClick={onExit} className="font-lobster text-2xl font-black italic tracking-tighter text-red-500 hover:text-red-400 transition-colors uppercase drop-shadow-[0_0_10px_rgba(255,0,0,0.5)]">
-                        Rias Gremori's <span className="text-white">Free Casino</span>
-                    </button>
-                    
-                    <nav className="hidden md:flex items-center gap-6">
-                        {['Lobby', 'Multiplayer', 'Leaderboard', 'VIP Club'].map(item => (
-                            <button key={item} className={cn(
-                                "text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
-                                item === 'Lobby' ? "text-secondary underline underline-offset-8" : "text-white/40 hover:text-white"
-                            )}>
-                                {item}
-                            </button>
-                        ))}
-                    </nav>
-                </div>
-
-                <div className="flex items-center gap-4">
-                    <button onClick={() => { setIsAutoSpinning(false); onExit(); }} className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors">
-                        <Wallet size={18} className="text-red-400" />
-                    </button>
-                    <button className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors">
-                        <Settings size={18} className="text-white/60" />
-                    </button>
-                    <div className="w-10 h-10 rounded-xl bg-red-900/20 border border-red-500/30 overflow-hidden shadow-[0_0_15px_rgba(255,42,42,0.4)]">
-                        <img 
-                           src={luckLevel === 'luckiest' ? "/images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "/images/rias_lucky.jpg" : "/images/rias_normal.webp"} 
-                           alt="Avatar" 
-                           referrerPolicy="no-referrer"
-                           className="w-full h-full object-cover" 
-                        />
-                    </div>
-                </div>
-            </header>
-
             {/* --- Main Content Area --- */}
             <main className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-8 space-y-8 relative">
                 
@@ -410,7 +518,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                              
                              <div className="aspect-[3/4] rounded-2xl overflow-hidden mb-6 border border-red-500/20 shadow-[0_0_30px_rgba(255,42,42,0.2)]">
                                 <img 
-                                   src={luckLevel === 'luckiest' ? "/images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "/images/rias_lucky.jpg" : "/images/rias_normal.webp"} 
+                                   src={luckLevel === 'luckiest' ? "./images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "./images/rias_lucky.jpg" : "./images/rias_normal.webp"} 
                                    alt="Rias Gremory" 
                                    referrerPolicy="no-referrer"
                                    className="w-full h-full object-cover transition-all duration-700 group-hover:scale-110" 
@@ -470,28 +578,21 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                     <div className="col-span-12 lg:col-span-8 flex flex-col gap-8">
                         {/* The Game Grid Container */}
                         <div className="flex-1 bg-gradient-to-b from-[#2a0505] to-[#000000] rounded-[48px] p-6 lg:p-12 border-4 border-red-900/40 shadow-[0_0_50px_rgba(255,0,0,0.1)] relative overflow-hidden">
-                            {/* Grid Frame */}
-                            <div className="relative z-10 grid grid-cols-5 gap-4 lg:gap-6">
-                                {grid.map((row, rIdx) => (
-                                    row.map((sym, cIdx) => (
-                                        <motion.div
-                                            key={`${rIdx}-${cIdx}`}
-                                            animate={reelStatus === 'spinning' ? {
-                                                y: [0, -20, 20, 0],
-                                                scale: [1, 0.9, 1.1, 1],
-                                            } : {}}
-                                            transition={{ repeat: reelStatus === 'spinning' ? Infinity : 0, duration: 0.15, delay: cIdx * 0.05 }}
-                                            className="aspect-square bg-gradient-to-br from-white/5 to-transparent border border-white/10 rounded-full flex items-center justify-center p-4 relative group"
-                                        >
-                                            <div className="absolute inset-0 bg-white/5 rounded-full scale-75 group-hover:scale-100 transition-transform duration-500 opacity-20 group-hover:opacity-40" />
-                                            <sym.icon 
-                                                size={32} 
-                                                className="relative z-10 drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" 
-                                                style={{ color: sym.color }} 
-                                            />
-                                        </motion.div>
-                                    ))
-                                ))}
+                            {/* Grid Frame with 3D Reels */}
+                            <div className="relative z-10 w-full h-[280px] lg:h-[320px] rounded-[24px] bg-black/60 border border-red-900/50 shadow-[inset_0_0_60px_rgba(255,0,0,0.15)] flex overflow-hidden">
+                                {/* Dark vignette top/bottom simulating curved depth */}
+                                <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/90 to-transparent z-20 pointer-events-none" />
+                                <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/90 to-transparent z-20 pointer-events-none" />
+                                
+                                <div className="relative z-10 grid grid-cols-5 gap-2 lg:gap-6 w-full h-full p-4 lg:p-6 items-center">
+                                    {[0, 1, 2, 3, 4].map(cIdx => (
+                                         <Reel3D
+                                             key={cIdx}
+                                             isSpinning={spinningReels[cIdx]}
+                                             symbols={grid[0] ? [ grid[0][cIdx], grid[1][cIdx], grid[2][cIdx] ] : []}
+                                         />
+                                    ))}
+                                </div>
                             </div>
 
                             {/* Floating Controls Overlay */}

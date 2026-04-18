@@ -739,29 +739,13 @@ export function RouletteGame({
   };
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row p-4 lg:p-12 gap-8 lg:gap-12 overflow-hidden bg-[#0a080d]">
+    <div className="flex-1 flex flex-col lg:flex-row p-4 lg:p-12 gap-8 lg:gap-12 overflow-y-auto overflow-x-hidden bg-[#0a080d]">
       
       {/* Visual Context */}
       <div className="flex-1 flex flex-col gap-6 lg:gap-8 z-10 relative">
         <div className="bg-gradient-to-br from-[#1c0000] to-[#0a0000] rounded-[24px] lg:rounded-[40px] flex-1 min-h-[400px] lg:min-h-[600px] shadow-[0_40px_100px_rgba(255,0,0,0.15)] overflow-hidden border border-red-900/40 relative flex items-center justify-center">
           
           <CanvasRoulette isSpinning={isSpinning} onResult={handleResult} spinTrigger={spinTrigger} />
-
-          {/* Return to Main Screen Button */}
-          <div className="absolute top-4 left-4 lg:top-8 lg:left-8 z-50">
-            <button 
-              onClick={onExit}
-              className="group flex items-center gap-3 bg-black/80 hover:bg-red-900/40 p-2 pr-5 rounded-2xl backdrop-blur-md border border-red-900/40 hover:border-red-500/40 transition-all active:scale-95 group shadow-[0_0_15px_rgba(255,0,0,0.2)]"
-            >
-              <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center border border-red-500/30 group-hover:bg-red-600 transition-colors">
-                <ArrowLeft size={20} className="text-red-500 group-hover:text-white transition-colors" />
-              </div>
-              <div className="text-left">
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#facc15]/60 group-hover:text-[#facc15] transition-colors">Return to</p>
-                <p className="text-xs font-lobster font-black text-white italic tracking-wider">Lobby</p>
-              </div>
-            </button>
-          </div>
 
           {/* Overlay UI removed as per user request */}
         </div>
@@ -793,14 +777,14 @@ export function RouletteGame({
           <div>
             <div className="flex items-center gap-2 mb-2 lg:mb-4">
               <div className="w-2 h-2 rounded-full bg-[#ff2a2a] animate-pulse shadow-[0_0_5px_rgba(255,42,42,0.8)]" />
-              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#ff2a2a]">2D Canvas Engine</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#ff2a2a]">Betting board</span>
             </div>
             <h1 className="font-lobster text-5xl lg:text-6xl font-black text-white tracking-wider leading-none mb-2 drop-shadow-[0_0_15px_rgba(255,0,0,0.5)]">ROULETTE <span className="text-[#facc15]">ROYALE</span></h1>
           </div>
         </div>
 
         {/* Bets Visualizer Grid */}
-        <div className="bg-[#0f0000] rounded-[32px] p-4 lg:p-6 flex-1 border border-red-900/30 shadow-2xl flex flex-col relative min-h-[300px] lg:min-h-[350px]">
+        <div className="bg-[#0f0000] w-full rounded-[32px] p-2 lg:p-6 border border-red-900/30 shadow-2xl flex flex-col relative min-h-[300px] lg:min-h-[350px]">
           <BettingBoard 
               bets={bets} 
               players={players}
