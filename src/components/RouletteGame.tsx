@@ -816,7 +816,7 @@ export function RouletteGame({
       <div className="w-full h-[250px] lg:h-[450px] shrink-0 rounded-[40px] border border-red-900/30 relative overflow-hidden group shadow-2xl bg-black flex items-center justify-center">
         {/* Ambient Blurred Background */}
         <img 
-          src="https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/main/images/rias_roulette_ingame.jpg" 
+          src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/rias_roulette_ingame.jpg" 
           aria-hidden="true"
           referrerPolicy="no-referrer"
           className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-20 scale-110 transition-transform duration-[5000ms] group-hover:scale-125" 
@@ -881,7 +881,7 @@ export function RouletteGame({
         
         {/* Full Character Image */}
         <img 
-          src="images/rias_roulette_ingame.jpg" 
+          src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/rias_roulette_ingame.jpg" 
           alt="Rias Gremory Full Art" 
           referrerPolicy="no-referrer"
           className="relative z-10 w-full h-full object-contain p-4 drop-shadow-[0_0_40px_rgba(255,0,0,0.4)] transition-transform duration-[3000ms] group-hover:scale-[1.01]" 
