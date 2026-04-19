@@ -340,6 +340,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
     const [sessionStats, setSessionStats] = useState({ totalBets: 3450, rounds: 142 });
     const [playerCharms, setPlayerCharms] = useState<Record<string, string>>({});
     const [playerWins, setPlayerWins] = useState<Record<string, number>>({});
+    const [freeSpinsRemaining, setFreeSpinsRemaining] = useState(0);
 
     const [isAutoSpinning, setIsAutoSpinning] = useState(false);
     const [spinningReels, setSpinningReels] = useState<boolean[]>([false, false, false, false, false]);
@@ -399,14 +400,19 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         if (reelStatus === 'spinning') return;
         audio.init();
         
-        const currentBetAmount = isAllInMode ? activePlayer.balance : selectedBet;
+        const isFreeSpin = freeSpinsRemaining > 0;
+        const currentBetAmount = isFreeSpin ? 0 : (isAllInMode ? activePlayer.balance : selectedBet);
         
         // Simultaneous Bet: All players bet!
-        const playersWhoCanBet = players.filter((p: any) => p.balance >= currentBetAmount);
-        if (playersWhoCanBet.length === 0 || currentBetAmount <= 0) {
+        const playersWhoCanBet = isFreeSpin ? players : players.filter((p: any) => p.balance >= currentBetAmount);
+        if (playersWhoCanBet.length === 0 || (currentBetAmount <= 0 && !isFreeSpin)) {
             setIsAutoSpinning(false);
             if (isAllInMode) setIsAllInMode(false);
             return;
+        }
+
+        if (isFreeSpin) {
+            setFreeSpinsRemaining(prev => prev - 1);
         }
 
         // Luck State Logic: Persistence of 5 spins between changes
@@ -426,19 +432,21 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
             }
         }
 
-        setPlayers((prev: any) => prev.map((p: any) => playersWhoCanBet.some(active => active.id === p.id) 
-            ? { ...p, balance: p.balance - currentBetAmount } 
-            : p
-        ));
+        if (!isFreeSpin) {
+            setPlayers((prev: any) => prev.map((p: any) => playersWhoCanBet.some(active => active.id === p.id) 
+                ? { ...p, balance: p.balance - currentBetAmount } 
+                : p
+            ));
 
-        // Update selectedBet for display if in All-In mode
-        if (isAllInMode) setSelectedBet(activePlayer.balance);
+            // Update selectedBet for display if in All-In mode
+            if (isAllInMode) setSelectedBet(activePlayer.balance);
 
-        setProgressiveJackpot(prev => prev + (currentBetAmount * playersWhoCanBet.length * 0.05));
-        setSessionStats(prev => ({ 
-            totalBets: prev.totalBets + (currentBetAmount * playersWhoCanBet.length), 
-            rounds: prev.rounds + 1 
-        }));
+            setProgressiveJackpot(prev => prev + (currentBetAmount * playersWhoCanBet.length * 0.05));
+            setSessionStats(prev => ({ 
+                totalBets: prev.totalBets + (currentBetAmount * playersWhoCanBet.length), 
+                rounds: prev.rounds + 1 
+            }));
+        }
 
         setReelStatus('spinning');
         setSpinningReels([true, true, true, true, true]);
@@ -448,37 +456,69 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         setComboCues([]);
         setWinningCoordinates(new Set());
 
-        // Calculate NEW GRID immediately for logic
+        // --- NEW PROBABILITY LOGIC ---
+        // Outcome types: 'loss', 'win', 'bigwin', 'fs', 'jackpot', 'bigwin_fs'
+        let outcome: 'loss' | 'win' | 'bigwin' | 'fs' | 'jackpot' | 'bigwin_fs' = 'loss';
+        const r = Math.random();
+
+        if (finalLuck === 'luckiest') {
+            // Luckiest: 30% Jackpot, 45% Big Win + FS, 25% Regular Win
+            if (r < 0.30) outcome = 'jackpot';
+            else if (r < 0.75) outcome = 'bigwin_fs';
+            else outcome = 'win';
+        } else if (finalLuck === 'lucky') {
+            // Fortunate: 40% Win (30% of this is Big Win), 60% FS
+            if (r < 0.40) {
+                outcome = (Math.random() < 0.30) ? 'bigwin' : 'win';
+            } else {
+                outcome = 'fs';
+            }
+        } else {
+            // Normal: 30% Win, 40% FS, 30% Loss
+            if (r < 0.30) outcome = 'win';
+            else if (r < 0.70) outcome = 'fs';
+            else outcome = 'loss';
+        }
+
+        // Generate Grid based on outcome
         const newGrid = Array.from({ length: GRID_ROWS }, () => 
             Array.from({ length: GRID_COLS }, () => SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)])
         );
 
-        // Luck manipulation
-        if (finalLuck === 'luckiest') {
-            // 60% chance for instant Grand Jackpot (5 Medals)
-            if (Math.random() < 0.6) {
-                const medalSym = SYMBOLS.find(s => s.id === 'medal')!;
-                const targetRow = Math.floor(Math.random() * GRID_ROWS);
-                for(let col = 0; col < GRID_COLS; col++) {
-                    newGrid[targetRow][col] = medalSym;
-                }
-            } else {
-                // Otherwise, standard high-tier boost
-                const winSym = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-                const targetRow = Math.floor(Math.random() * GRID_ROWS);
-                newGrid[targetRow][0] = winSym;
-                newGrid[Math.floor(Math.random() * GRID_ROWS)][1] = winSym;
-                newGrid[Math.floor(Math.random() * GRID_ROWS)][2] = winSym;
-                if (Math.random() < 0.7) newGrid[Math.floor(Math.random() * GRID_ROWS)][3] = winSym;
+        // Helper to sprinkle wins
+        const applyWinToGrid = (targetGrid: any[][], sy: any, count: number) => {
+            const rowArr = [0, 1, 2];
+            for(let c=0; c<count; c++) {
+                const rIdx = rowArr[Math.floor(Math.random()*rowArr.length)];
+                targetGrid[rIdx][c] = sy;
             }
-        } else if (finalLuck === 'lucky') {
-            if (Math.random() < 0.4) {
-                const winSym = SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-                const targetRow = Math.floor(Math.random() * GRID_ROWS);
-                newGrid[targetRow][0] = winSym;
-                newGrid[Math.floor(Math.random() * GRID_ROWS)][1] = winSym;
-                newGrid[Math.floor(Math.random() * GRID_ROWS)][2] = winSym;
-            }
+        };
+
+        const topSym = SYMBOLS.find(s => s.id === 'medal')!;
+        const midSym = SYMBOLS.find(s => s.id === 'diamond') || SYMBOLS[0];
+
+        if (outcome === 'jackpot') {
+            applyWinToGrid(newGrid, topSym, 5);
+        } else if (outcome === 'bigwin_fs' || outcome === 'bigwin') {
+            applyWinToGrid(newGrid, SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)], 4 + Math.floor(Math.random()*2));
+        } else if (outcome === 'fs') {
+            // Just hit some small wins to keep it interesting but logic will award FS if we define it below
+            applyWinToGrid(newGrid, SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)], 3);
+        } else if (outcome === 'win') {
+            applyWinToGrid(newGrid, SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)], 3);
+        } else if (outcome === 'loss') {
+            // Ensure no 3-of-a-kind on column 1-3
+            // Purely random for now, chance of accidental win is low enough for 'loss' simulation
+        }
+
+        // Logic for Free Spins Awarded in this turn
+        let awardedFS = 0;
+        if (outcome === 'fs' || outcome === 'bigwin_fs') {
+            // Up to 10 spins, less chances for bigger numbers
+            const fsRoll = Math.random();
+            if (fsRoll < 0.5) awardedFS = Math.floor(Math.random() * 3) + 1; // 1-3 (50%)
+            else if (fsRoll < 0.85) awardedFS = Math.floor(Math.random() * 3) + 4; // 4-6 (35%)
+            else awardedFS = Math.floor(Math.random() * 4) + 7; // 7-10 (15%)
         }
 
         setGrid(newGrid);
@@ -501,13 +541,13 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                     if (colIndex === 4) {
                         clearInterval(spinIntervalRef.current);
                         setReelStatus('stopped');
-                        calculateWin(newGrid, currentBetAmount);
+                        calculateWin(newGrid, isFreeSpin ? selectedBet : currentBetAmount, awardedFS);
                     }
                 }, colIndex * 650); // Increased delay to 650ms for a very distinct one-by-one feel
             });
         }, 1200); // 1.2s spin duration before stopping sequence begins
 
-    }, [reelStatus, players, selectedBet, luckLevel, luckDuration, playerCharms, audio]);
+    }, [reelStatus, players, selectedBet, luckLevel, luckDuration, playerCharms, audio, freeSpinsRemaining, isAllInMode, activePlayer.balance]);
 
     // Auto Spin Effect
     useEffect(() => {
@@ -532,7 +572,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         }
     };
 
-    const calculateWin = (newGrid: any[][], betAmount: number) => {
+    const calculateWin = (newGrid: any[][], betAmount: number, awardedFS: number = 0) => {
         // 243 ways logic BASE
         const symbolsInCol1 = newGrid.map(row => row[0].id);
         const uniqueInCol1 = Array.from(new Set(symbolsInCol1));
@@ -622,11 +662,28 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
             }
         });
 
-        if (totalGroupWin > 0) {
+        if (totalGroupWin > 0 || awardedFS > 0) {
             setLastWin(totalGroupWin);
-            setWinMessage(jackpotWon ? "GRAND JACKPOT WON!!!" : (triggeredCharm ? "FULL CHARM POWER!" : "GROUP WIN!"));
+            let message = "";
+            let showClue = false;
+            
+            if (jackpotWon) message = "GRAND JACKPOT WON!!!";
+            else if (awardedFS > 0 && totalGroupWin > 0) {
+                message = `WIN + ${awardedFS} FREE SPINS!`;
+                showClue = true;
+            } else if (awardedFS > 0) {
+                message = `${awardedFS} FREE SPINS!`;
+                showClue = true;
+            } else if (triggeredCharm) message = "FULL CHARM POWER!";
+            else message = "GROUP WIN!";
+
+            setWinMessage(message);
             setPlayerWins(newPlayerWins);
             
+            if (awardedFS > 0) {
+                setFreeSpinsRemaining(prev => prev + awardedFS);
+            }
+
             if (jackpotWon) {
                 setProgressiveJackpot(10000); // Reset to base 10k
                 confetti({
@@ -750,13 +807,15 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                         {/* The Game Grid Container */}
                         <div className={cn(
                             "flex-1 bg-gradient-to-b rounded-[48px] p-6 lg:p-12 border-4 transition-all duration-700 relative overflow-hidden",
-                            isMaxBet 
-                                ? "from-[#450a0a] to-black border-red-500 shadow-[0_0_100px_rgba(255,0,0,0.3)]" 
-                                : "from-[#2a0505] to-[#000000] border-red-900/40 shadow-[0_0_50px_rgba(255,0,0,0.1)]"
+                            freeSpinsRemaining > 0
+                                ? "from-[#001c2a] to-black border-cyan-500 shadow-[0_0_100px_rgba(0,186,243,0.3)]"
+                                : isMaxBet 
+                                    ? "from-[#450a0a] to-black border-red-500 shadow-[0_0_100px_rgba(255,0,0,0.3)]" 
+                                    : "from-[#2a0505] to-[#000000] border-red-900/40 shadow-[0_0_50px_rgba(255,0,0,0.1)]"
                         )}>
                             {/* Inferno Animated Overlay for Max Bet */}
                             <AnimatePresence>
-                                {isMaxBet && (
+                                {isMaxBet && freeSpinsRemaining === 0 && (
                                     <motion.div 
                                         initial={{ opacity: 0 }}
                                         animate={{ opacity: 1 }}
@@ -767,14 +826,57 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                                         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-red-600/10 to-transparent" />
                                     </motion.div>
                                 )}
+                                {freeSpinsRemaining > 0 && (
+                                     <motion.div 
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        exit={{ opacity: 0 }}
+                                        className="absolute inset-0 pointer-events-none z-0"
+                                    >
+                                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(0,186,243,0.2),transparent_70%)] animate-pulse" />
+                                        <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-cyan-600/10 to-transparent" />
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            {/* Free Spins Indicator */}
+                            {freeSpinsRemaining > 0 && (
+                                <motion.div 
+                                    initial={{ y: -20, opacity: 0 }}
+                                    animate={{ y: 0, opacity: 1 }}
+                                    className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-cyan-500/20 backdrop-blur-md border border-cyan-500/50 px-6 py-2 rounded-full flex items-center gap-3 shadow-[0_0_20px_rgba(0,186,243,0.4)]"
+                                >
+                                    <RotateCcw className="w-4 h-4 text-cyan-400 animate-spin-slow" />
+                                    <span className="text-sm font-black text-white uppercase tracking-widest whitespace-nowrap">
+                                        Free Spins: <span className="text-cyan-400 text-lg">{freeSpinsRemaining}</span>
+                                    </span>
+                                </motion.div>
+                            )}
+
+                            {/* Award Clue Indicator */}
+                            <AnimatePresence>
+                                {winMessage && winMessage.includes("FREE SPINS") && (
+                                    <motion.div 
+                                        initial={{ scale: 0, rotate: -20 }}
+                                        animate={{ scale: 1, rotate: 0 }}
+                                        exit={{ scale: 0 }}
+                                        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40"
+                                    >
+                                        <div className="bg-cyan-500 text-black px-8 py-4 rounded-2xl font-black text-3xl shadow-[0_0_50px_rgba(0,186,243,0.8)] border-4 border-white animate-bounce-slow">
+                                            BONUS CLUE!
+                                        </div>
+                                    </motion.div>
+                                )}
                             </AnimatePresence>
 
                             {/* Grid Frame with 3D Reels */}
                             <div className={cn(
                                 "relative z-10 w-full h-[280px] lg:h-[320px] rounded-[24px] bg-black/60 border transition-all duration-700 flex overflow-x-auto overflow-y-hidden no-scrollbar",
-                                isMaxBet 
-                                    ? "border-red-500 shadow-[inset_0_0_80px_rgba(255,0,0,0.4),0_0_40px_rgba(255,0,0,0.2)]" 
-                                    : "border-red-900/50 shadow-[inset_0_0_60px_rgba(255,0,0,0.15)]"
+                                freeSpinsRemaining > 0
+                                    ? "border-cyan-500 shadow-[inset_0_0_80px_rgba(0,186,243,0.4),0_0_40px_rgba(0,186,243,0.2)]"
+                                    : isMaxBet 
+                                        ? "border-red-500 shadow-[inset_0_0_80px_rgba(255,0,0,0.4),0_0_40px_rgba(255,0,0,0.2)]" 
+                                        : "border-red-900/50 shadow-[inset_0_0_60px_rgba(255,0,0,0.15)]"
                             )}>
                                 {/* Dark vignette top/bottom simulating curved depth */}
                                 <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/90 to-transparent z-20 pointer-events-none" />
