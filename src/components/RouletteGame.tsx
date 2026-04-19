@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, RotateCcw, Undo, CircleDot, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -117,7 +117,8 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
     ball: { x: 0, y: 0, vx: 0, vy: 0, radius: 0, jitter: 0 },
     phase: 'IDLE' as 'IDLE' | 'SPINNING' | 'SETTLING' | 'SETTLED',
     settleIndex: -1,
-    deflectors: [] as {angle: number, radius: number}[]
+    deflectors: [] as {angle: number, radius: number}[],
+    reportedResult: false
   });
 
   // Init deflectors
@@ -161,6 +162,7 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
       };
       
       state.current.settleIndex = -1;
+      state.current.reportedResult = false;
     }
   }, [spinTrigger]);
 
@@ -631,8 +633,9 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
             }
 
             // When wheel almost stops completely, trigger result
-            if (st.wheelSpeed < 0.002 && isSpinning) {
+            if (st.wheelSpeed < 0.002 && isSpinning && !st.reportedResult) {
                 st.wheelSpeed = 0; // Stop completely
+                st.reportedResult = true;
                 onResult(WHEEL_NUMBERS[st.settleIndex]);
             }
         }
@@ -681,9 +684,11 @@ export function RouletteGame({
   const [isSpinning, setIsSpinning] = useState(false);
   const [result, setResult] = useState<number | null>(null);
   const [spinTrigger, setSpinTrigger] = useState(0);
+  const [history, setHistory] = useState<{val: number, type: string}[]>([]);
 
   // --- Betting State (Local to game round) ---
   const [bets, setBets] = useState<RouletteBet[]>([]);
+  const [previousBets, setPreviousBets] = useState<RouletteBet[]>([]);
   const [payoutsData, setPayoutsData] = useState<{playerId: string, winnings: number}[]>([]);
 
   const handlePlaceBet = (type: BetType, numbers: number[]) => {
@@ -702,17 +707,83 @@ export function RouletteGame({
     setBets(prev => prev.slice(0, -1));
   };
   
-  const startSpin = () => {
+  const clearBets = () => {
+    if (isSpinning) return;
+    setPlayers(prev => prev.map(p => {
+        const playerBets = bets.filter(b => b.playerId === p.id);
+        const totalBack = playerBets.reduce((sum, b) => sum + b.amount, 0);
+        return { ...p, balance: p.balance + totalBack };
+    }));
+    setBets([]);
+  };
+
+  const handleRepeatBet = () => {
+    if (isSpinning || previousBets.length === 0 || bets.length > 0) return;
+    
+    setPlayers(prev => {
+        const next = [...prev];
+        let possible = true;
+        
+        // Validation check
+        previousBets.forEach(bet => {
+            const pIndex = next.findIndex(p => p.id === bet.playerId);
+            if (pIndex === -1 || next[pIndex].balance < bet.amount) {
+                possible = false;
+            }
+        });
+
+        if (!possible) return prev;
+
+        // Apply
+        previousBets.forEach(bet => {
+            const pIndex = next.findIndex(p => p.id === bet.playerId);
+            next[pIndex].balance -= bet.amount;
+        });
+        return next;
+    });
+
+    setBets(previousBets.map(b => ({ ...b, id: Date.now().toString() + Math.random() })));
+  };
+
+  const handleDoubleBet = () => {
     if (isSpinning || bets.length === 0) return;
+
+    setPlayers(prev => {
+        const next = [...prev];
+        let possible = true;
+        
+        bets.forEach(bet => {
+            const pIndex = next.findIndex(p => p.id === bet.playerId);
+            if (pIndex === -1 || next[pIndex].balance < bet.amount) {
+                possible = false;
+            }
+        });
+
+        if (!possible) return prev;
+
+        bets.forEach(bet => {
+            const pIndex = next.findIndex(p => p.id === bet.playerId);
+            next[pIndex].balance -= bet.amount;
+        });
+        return next;
+    });
+
+    setBets(prev => [...prev, ...prev.map(b => ({ ...b, id: Date.now().toString() + Math.random() }))]);
+  };
+
+  const startSpin = () => {
+    if (isSpinning || bets.length === 0 || result !== null) return;
+    setPreviousBets([...bets]);
     setIsSpinning(true);
     setResult(null);
     setPayoutsData([]);
     setSpinTrigger(Date.now());
   };
 
-  const handleResult = (num: number) => {
+  const handleResult = useCallback((num: number) => {
     setIsSpinning(false);
     setResult(num);
+    setHistory(prev => [{ val: num, type: getNumberColor(num) }, ...prev].slice(0, 10));
     confetti({
       particleCount: 200,
       spread: 90,
@@ -730,7 +801,7 @@ export function RouletteGame({
         }
         return p;
     }));
-  };
+  }, [bets, players, setPlayers]);
 
   const dismissResult = () => {
       setResult(null);
@@ -742,8 +813,8 @@ export function RouletteGame({
     <div className="flex-1 flex flex-col lg:flex-row p-4 lg:p-12 gap-8 lg:gap-12 overflow-y-auto overflow-x-hidden bg-[#0a080d]">
       
       {/* Visual Context */}
-      <div className="flex-1 flex flex-col gap-6 lg:gap-8 z-10 relative">
-        <div className="bg-gradient-to-br from-[#1c0000] to-[#0a0000] rounded-[24px] lg:rounded-[40px] flex-1 min-h-[400px] lg:min-h-[600px] shadow-[0_40px_100px_rgba(255,0,0,0.15)] overflow-hidden border border-red-900/40 relative flex items-center justify-center">
+      <div className="w-full lg:flex-1 flex flex-col gap-4 lg:gap-8 z-10 relative">
+        <div className="bg-gradient-to-br from-[#1c0000] to-[#0a0000] rounded-[24px] lg:rounded-[40px] w-full aspect-square lg:aspect-auto lg:flex-1 max-h-[350px] lg:max-h-none lg:min-h-[600px] shadow-[0_40px_100px_rgba(255,0,0,0.15)] overflow-hidden border border-red-900/40 relative flex items-center justify-center">
           
           <CanvasRoulette isSpinning={isSpinning} onResult={handleResult} spinTrigger={spinTrigger} />
 
@@ -753,10 +824,13 @@ export function RouletteGame({
         {/* Live History Feed */}
         <div className="bg-[#0f0000] rounded-2xl p-4 lg:p-6 flex items-center gap-4 lg:gap-6 border border-red-900/30 shadow-2xl overflow-hidden shrink-0">
           <span className="hidden lg:block font-headline text-[#facc15]/60 text-[10px] font-black uppercase tracking-[0.4em] pl-4 border-r border-red-900/30 pr-10">Live Feed</span>
-          <div className="flex gap-4 overflow-x-auto no-scrollbar w-full">
-            {RECENT_NUMBERS.map((n, i) => (
-              <div
+          <div className="flex gap-4 overflow-x-auto no-scrollbar w-full min-h-[48px]">
+            {history.length === 0 && <span className="text-white/10 text-[10px] uppercase font-bold self-center">No spins yet</span>}
+            {history.map((n, i) => (
+              <motion.div
                 key={i}
+                initial={{ scale: 0, x: -20 }}
+                animate={{ scale: 1, x: 0 }}
                 className={cn(
                   "w-10 h-10 lg:w-12 lg:h-12 rounded-full flex items-center justify-center font-headline font-black text-lg lg:text-xl shrink-0 border-2",
                   n.type === 'red' ? "bg-red-900/40 text-white border-red-500/50 shadow-[0_0_10px_rgba(255,0,0,0.5)]" : "",
@@ -765,7 +839,7 @@ export function RouletteGame({
                 )}
               >
                 {n.val}
-              </div>
+              </motion.div>
             ))}
           </div>
         </div>
@@ -784,7 +858,7 @@ export function RouletteGame({
         </div>
 
         {/* Bets Visualizer Grid */}
-        <div className="bg-[#0f0000] w-full rounded-[32px] p-2 lg:p-6 border border-red-900/30 shadow-2xl flex flex-col relative min-h-[300px] lg:min-h-[350px]">
+        <div className="bg-[#0f0000] w-full rounded-[32px] p-2 lg:p-6 border border-red-900/30 shadow-2xl flex flex-col relative">
           <BettingBoard 
               bets={bets} 
               players={players}
@@ -830,13 +904,13 @@ export function RouletteGame({
 
         {/* Spin Actions */}
         <div className="bg-[#0f0000] rounded-[32px] p-4 lg:p-6 border border-red-900/30 shadow-[0_0_30px_rgba(255,0,0,0.1)]">
-          <div className="flex justify-between items-center mb-6 lg:mb-8">
+          <div className="flex flex-wrap justify-center items-center gap-2 lg:gap-4 mb-6 lg:mb-8">
             {CHIPS.map(c => (
               <button 
                 key={c} 
                 onClick={() => setSelectedChip(c)} 
                 className={cn(
-                  "w-12 h-12 lg:w-14 lg:h-14 rounded-full flex items-center justify-center font-headline font-black transition-all", 
+                  "w-10 h-10 lg:w-14 lg:h-14 rounded-full flex items-center justify-center font-headline font-black transition-all text-xs lg:text-base shrink-0", 
                   selectedChip === c 
                     ? "bg-[#facc15] text-black scale-110 shadow-[0_0_20px_rgba(250,204,21,0.5)]" 
                     : "bg-white/5 text-white/30 border border-white/10 hover:bg-white/10 hover:text-white/60"
@@ -847,20 +921,50 @@ export function RouletteGame({
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-4 lg:gap-5">
-            <button onClick={undoLastBet} className="flex items-center justify-center gap-2 lg:gap-3 bg-red-900/20 text-red-500/60 py-4 lg:py-5 rounded-2xl font-black text-[10px] hover:bg-red-900/40 hover:text-red-400 border border-red-900/30 transition-all uppercase tracking-widest">
-              <Undo size={16} /> Undo
-            </button>
-            <button 
-              onClick={startSpin} disabled={isSpinning || bets.length === 0}
-              className={cn(
-                "bg-gradient-to-br from-red-500 to-red-800 text-white py-4 lg:py-5 rounded-2xl font-lobster font-black text-xl lg:text-2xl flex items-center justify-center gap-2 lg:gap-3 transition-all border-b-4 border-red-900", 
-                (isSpinning || bets.length === 0) ? "opacity-30 cursor-not-allowed grayscale border-b-0 translate-y-1" : "hover:from-red-400 hover:to-red-700 active:scale-95 active:border-b-0 active:translate-y-1 shadow-[0_15px_40px_rgba(255,42,42,0.4)]"
-              )}
-            >
-              {isSpinning ? <RotateCcw size={24} className="animate-spin" /> : <Play size={24} fill="currentColor" />}
-              {isSpinning ? 'SPINNING' : 'SPIN BALL'}
-            </button>
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={handleRepeatBet}
+                  disabled={isSpinning || previousBets.length === 0 || bets.length > 0}
+                  className="flex items-center justify-center gap-2 bg-white/5 text-white/40 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-white/10 hover:text-white border border-white/5 transition-all disabled:opacity-10"
+                >
+                  <RotateCcw size={14} /> Repeat Last
+                </button>
+                <button 
+                  onClick={handleDoubleBet}
+                  disabled={isSpinning || bets.length === 0}
+                  className="flex items-center justify-center gap-2 bg-yellow-900/10 text-[#facc15]/40 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-yellow-900/20 hover:text-[#facc15] border border-yellow-900/20 transition-all disabled:opacity-10"
+                >
+                  <Play size={14} className="rotate-90 scale-x-[-1]" /> Double Bet
+                </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 lg:gap-4">
+                <button 
+                onClick={clearBets} 
+                disabled={isSpinning || bets.length === 0 || result !== null}
+                className="group flex flex-col items-center justify-center gap-1 bg-white/5 text-white/30 py-4 rounded-2xl font-black text-[9px] hover:bg-white/10 hover:text-white border border-white/10 transition-all uppercase tracking-widest disabled:opacity-20"
+                >
+                <RotateCcw size={16} className="group-hover:rotate-[-90deg] transition-transform" /> Clear
+                </button>
+                <button 
+                onClick={undoLastBet}
+                disabled={isSpinning || bets.length === 0 || result !== null}
+                className="flex flex-col items-center justify-center gap-1 bg-red-900/10 text-red-500/40 py-4 rounded-2xl font-black text-[9px] hover:bg-red-900/20 hover:text-red-400 border border-red-900/30 transition-all uppercase tracking-widest disabled:opacity-20"
+                >
+                <Undo size={16} /> Undo
+                </button>
+                <button 
+                onClick={startSpin} disabled={isSpinning || bets.length === 0 || result !== null}
+                className={cn(
+                    "bg-gradient-to-br from-red-500 to-red-800 text-white rounded-2xl font-lobster font-black text-lg flex flex-col items-center justify-center transition-all border-b-4 border-red-900", 
+                    (isSpinning || bets.length === 0 || result !== null) ? "opacity-30 cursor-not-allowed grayscale border-b-0 translate-y-1" : "hover:from-red-400 hover:to-red-700 active:scale-95 active:border-b-0 active:translate-y-1 shadow-[0_15px_40px_rgba(255,42,42,0.4)]"
+                )}
+                >
+                {isSpinning ? <RotateCcw size={20} className="animate-spin" /> : <Play size={20} fill="currentColor" />}
+                <span className="text-[10px] tracking-widest uppercase font-sans mt-1">{isSpinning ? 'SPINNING' : 'SPIN'}</span>
+                </button>
+            </div>
           </div>
         </div>
       </div>
