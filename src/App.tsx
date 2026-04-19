@@ -153,14 +153,8 @@ export default function App() {
                 <div className="text-secondary opacity-50 font-lobster font-black italic text-2xl uppercase tracking-[0.2em]">
                   Rias Gremori's Free Casino
                 </div>
-                <div className="flex flex-wrap justify-center gap-x-12 gap-y-4 font-body text-[10px] uppercase tracking-widest font-bold text-on-surface/30">
-                  <a href="#" className="hover:text-secondary transition-colors underline underline-offset-8 decoration-outline-variant/30">Support</a>
-                  <a href="#" className="hover:text-secondary transition-colors underline underline-offset-8 decoration-outline-variant/30">Responsible Gaming</a>
-                  <a href="#" className="hover:text-secondary transition-colors underline underline-offset-8 decoration-outline-variant/30">Terms of Service</a>
-                  <a href="#" className="hover:text-secondary transition-colors underline underline-offset-8 decoration-outline-variant/30">Privacy Policy</a>
-                </div>
                 <p className="text-[10px] font-medium text-on-surface/20 text-center uppercase tracking-widest">
-                  © 2024 NOCTURNAL ATELIER. LICENSED BY GAMING CURAÇAO.
+                  © 2024 NOCTURNAL DEVIL. LICENSED BY GAMING CURAÇAO.
                 </p>
               </footer>
             </motion.div>

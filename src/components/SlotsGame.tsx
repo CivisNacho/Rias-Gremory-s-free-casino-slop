@@ -79,17 +79,35 @@ const useSlotsAudio = () => {
 
     const playThud = useCallback(() => {
         if (!audioCtx.current) return;
-        const osc = audioCtx.current.createOscillator();
-        const gain = audioCtx.current.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(100, audioCtx.current.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(30, audioCtx.current.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.5, audioCtx.current.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.current.currentTime + 0.15);
-        osc.connect(gain);
-        gain.connect(audioCtx.current.destination);
-        osc.start();
-        osc.stop(audioCtx.current.currentTime + 0.15);
+        const ctx = audioCtx.current;
+        
+        // Sub-kick layer
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(150, ctx.currentTime);
+        osc1.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.2);
+        gain1.gain.setValueAtTime(0.6, ctx.currentTime);
+        gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+        
+        // Metallic "clack" layer
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = 'triangle';
+        osc2.frequency.setValueAtTime(800, ctx.currentTime);
+        osc2.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.05);
+        gain2.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        
+        osc1.start();
+        osc2.start();
+        osc1.stop(ctx.currentTime + 0.2);
+        osc2.stop(ctx.currentTime + 0.2);
     }, []);
 
     const playWinChime = useCallback(() => {
@@ -105,7 +123,7 @@ const useSlotsAudio = () => {
 };
 
 // --- 3D Reel Component ---
-const Reel3D = ({ isSpinning, symbols }: { isSpinning: boolean, symbols: any[] }) => {
+const Reel3D = ({ isSpinning, symbols, activeCombos, winningRows }: { isSpinning: boolean, symbols: any[], activeCombos: any[], winningRows: number[] }) => {
     const controls = useAnimation();
     const [faces, setFaces] = useState<any[]>(() => {
         const arr = Array(10).fill(null).map(()=> SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)]);
@@ -119,9 +137,10 @@ const Reel3D = ({ isSpinning, symbols }: { isSpinning: boolean, symbols: any[] }
 
     useEffect(() => {
         if (isSpinning) {
+            controls.set({ filter: 'blur(8px)', opacity: 0.8 });
             controls.start({
                 rotateX: [0, -360],
-                transition: { repeat: Infinity, duration: 0.35, ease: 'linear' }
+                transition: { repeat: Infinity, duration: 0.15, ease: 'linear' }
             });
         } else {
             setFaces(prev => {
@@ -133,9 +152,18 @@ const Reel3D = ({ isSpinning, symbols }: { isSpinning: boolean, symbols: any[] }
                 }
                 return next;
             });
+            
+            // Critical: Remove blur immediately on stop for clarity
+            controls.set({ filter: 'blur(0px)', opacity: 1 });
             controls.start({
-                rotateX: [-144, 0], // Snap smoothly
-                transition: { type: 'spring', damping: 14, stiffness: 120 }
+                rotateX: [-36, 0], // Instantly lock, travel only 1 face for a "hard stop"
+                transition: { 
+                    type: 'spring', 
+                    damping: 20, 
+                    stiffness: 400, 
+                    mass: 0.5,
+                    restDelta: 0.001
+                }
             });
         }
     }, [isSpinning, symbols, controls]);
@@ -147,17 +175,43 @@ const Reel3D = ({ isSpinning, symbols }: { isSpinning: boolean, symbols: any[] }
                 style={{ transformStyle: 'preserve-3d' }}
                 className="absolute w-full h-[80px]"
             >
-                {faces.map((sym, i) => (
-                    <div
-                        key={i}
-                        className="absolute left-0 right-0 h-[80px] flex items-center justify-center"
-                        style={{ transform: `rotateX(${i * 36}deg) translateZ(135px)`, backfaceVisibility: 'hidden' }}
-                    >
-                        <div className="w-[70px] h-[70px] lg:w-[80px] lg:h-[80px] bg-gradient-to-br from-white/10 to-transparent border border-white/15 rounded-full flex items-center justify-center relative shadow-[inset_0_4px_15px_rgba(255,255,255,0.15)] bg-black/60 backdrop-blur-md">
-                            <sym.icon size={32} className="relative z-10 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]" style={{ color: sym.color }} />
+                {faces.map((sym, i) => {
+                    // Row 0 is Top (face 9), Row 1 is Mid (face 0), Row 2 is Bot (face 1) based on rotation [-36, 0] ending on 0
+                    const isWinningFace = activeCombos.length > 0 && ((i === 9 && winningRows.includes(0)) || (i === 0 && winningRows.includes(1)) || (i === 1 && winningRows.includes(2)));
+
+                    return (
+                        <div
+                            key={i}
+                            className="absolute left-0 right-0 h-[80px] flex items-center justify-center transition-all duration-700"
+                            style={{ 
+                                transform: `rotateX(${i * 36}deg) translateZ(${isWinningFace ? 145 : 123}px)`, 
+                                backfaceVisibility: 'hidden',
+                                zIndex: isWinningFace ? 40 : 10
+                            }}
+                        >
+                            <div className={cn(
+                                "w-[70px] h-[70px] lg:w-[80px] lg:h-[80px] rounded-full flex items-center justify-center relative backdrop-blur-md transition-all duration-500",
+                                isWinningFace 
+                                    ? "bg-gradient-to-br from-yellow-300/30 to-red-600/60 border-2 border-[#facc15] shadow-[0_0_40px_rgba(250,204,21,0.6),inset_0_0_20px_rgba(255,0,0,0.8)] scale-110" 
+                                    : "bg-gradient-to-br from-white/10 to-transparent border border-white/15 shadow-[inset_0_4px_15px_rgba(255,255,255,0.15)] bg-black/60"
+                            )}>
+                                {/* Glowing Ring Indicator */}
+                                {isWinningFace && (
+                                    <div className="absolute inset-[-4px] rounded-full border-2 border-white/80 animate-ping opacity-60 pointer-events-none" />
+                                )}
+                                
+                                <sym.icon 
+                                    size={32} 
+                                    className={cn(
+                                        "relative z-10 transition-all duration-500",
+                                        isWinningFace ? "scale-125 drop-shadow-[0_0_25px_rgba(255,255,255,0.9)] animate-pulse" : "drop-shadow-[0_0_15px_rgba(255,255,255,0.5)]"
+                                    )} 
+                                    style={{ color: sym.color }} 
+                                />
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </motion.div>
         </div>
     )
@@ -287,6 +341,8 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
 
     const [isAutoSpinning, setIsAutoSpinning] = useState(false);
     const [spinningReels, setSpinningReels] = useState<boolean[]>([false, false, false, false, false]);
+    const [comboCues, setComboCues] = useState<{ id: string, name: string, count: number, multiplier: number, color: string }[]>([]);
+    const [winningCoordinates, setWinningCoordinates] = useState<Set<string>>(new Set());
     
     const audio = useSlotsAudio();
     const spinIntervalRef = useRef<any>(null);
@@ -361,6 +417,8 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         setWinMessage("");
         setLastWin(0);
         setPlayerWins({});
+        setComboCues([]);
+        setWinningCoordinates(new Set());
 
         // Calculate NEW GRID immediately for logic
         const newGrid = Array.from({ length: GRID_ROWS }, () => 
@@ -389,7 +447,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
         spinIntervalRef.current = setInterval(() => audio.playTick(), 60);
 
-        // Cascade Stop Logic
+        // Cascade Stop Logic: Deliberate one-by-one sequence
         setTimeout(() => {
             [0, 1, 2, 3, 4].forEach(colIndex => {
                 setTimeout(() => {
@@ -405,7 +463,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                         setReelStatus('stopped');
                         calculateWin(newGrid);
                     }
-                }, colIndex * 250); // Cascade stop: 0ms, 250ms, 500ms...
+                }, colIndex * 650); // Increased delay to 650ms for a very distinct one-by-one feel
             });
         }, 1200); // 1.2s spin duration before stopping sequence begins
 
@@ -429,6 +487,8 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         const uniqueInCol1 = Array.from(new Set(symbolsInCol1));
 
         let baseWinAmount = 0;
+        const newComboCues: { id: string, name: string, count: number, multiplier: number, color: string }[] = [];
+        const newWinningCoords = new Set<string>();
 
         uniqueInCol1.forEach(symId => {
             let count = 1;
@@ -442,8 +502,18 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
 
             if (count >= 3) {
                 const sym = SYMBOLS.find(s => s.id === symId)!;
-                // Reduced multiplier for balance (similar to roulette's conservative payouts)
-                baseWinAmount += sym.value * (count - 2) * (selectedBet / 50);
+                const multiplier = count - 2;
+                baseWinAmount += sym.value * multiplier * (selectedBet / 50);
+                newComboCues.push({ id: sym.id, name: sym.name, count, multiplier, color: sym.color });
+                
+                // Track exact coordinates that triggered this win
+                for (let c = 0; c < count; c++) {
+                    for (let r = 0; r < GRID_ROWS; r++) {
+                        if (newGrid[r][c].id === sym.id) {
+                            newWinningCoords.add(`${r},${c}`);
+                        }
+                    }
+                }
             }
         });
 
@@ -482,6 +552,9 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
             audio.playWinChime();
             triggerConfetti();
         }
+
+        setComboCues(newComboCues);
+        setWinningCoordinates(newWinningCoords);
     };
 
     const triggerConfetti = () => {
@@ -518,7 +591,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                              
                              <div className="aspect-[3/4] rounded-2xl overflow-hidden mb-6 border border-red-500/20 shadow-[0_0_30px_rgba(255,42,42,0.2)]">
                                 <img 
-                                   src={luckLevel === 'luckiest' ? "https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/heads/main/public/images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/heads/main/public/images/rias_lucky.jpg" : "https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/refs/heads/main/public/images/rias_normal.webp"} 
+                                   src={luckLevel === 'luckiest' ? "https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/main/public/images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/main/public/images/rias_lucky.jpg" : "https://raw.githubusercontent.com/CivisNacho/Rias-Gremory-s-free-casino-slop/main/public/images/rias_normal.webp"} 
                                    alt="Rias Gremory" 
                                    referrerPolicy="no-referrer"
                                    className="w-full h-full object-cover transition-all duration-700 group-hover:scale-110" 
@@ -584,14 +657,50 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                                 <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/90 to-transparent z-20 pointer-events-none" />
                                 <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/90 to-transparent z-20 pointer-events-none" />
                                 
+                                {/* --- Combo Cues Overlay --- */}
+                                <AnimatePresence>
+                                    {comboCues.length > 0 && reelStatus === 'stopped' && (
+                                        <motion.div 
+                                            initial={{ scale: 0.8, opacity: 0 }}
+                                            animate={{ scale: 1, opacity: 1 }}
+                                            exit={{ scale: 0.8, opacity: 0 }}
+                                            className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none bg-black/60 backdrop-blur-sm"
+                                        >
+                                            {comboCues.map((cue, idx) => (
+                                                <motion.div 
+                                                    key={idx}
+                                                    initial={{ x: -50, opacity: 0 }}
+                                                    animate={{ x: 0, opacity: 1 }}
+                                                    transition={{ delay: idx * 0.15, type: 'spring' }}
+                                                    className="flex items-center gap-4 mb-2 bg-gradient-to-r from-transparent via-black/80 to-transparent px-16 py-3"
+                                                >
+                                                    <span className="text-4xl lg:text-5xl font-black font-lobster drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]" style={{ color: cue.color }}>{cue.count}x {cue.name}</span>
+                                                    <span className="text-xl lg:text-3xl font-black text-[#facc15] bg-red-600 px-3 py-1 rounded-xl border-2 border-[#facc15] shadow-[0_0_20px_rgba(250,204,21,0.5)] transform -rotate-3">
+                                                        {cue.multiplier}X MULTI!
+                                                    </span>
+                                                </motion.div>
+                                            ))}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+
                                 <div className="relative z-10 grid grid-cols-5 gap-2 lg:gap-6 w-full h-full p-4 lg:p-6 items-center">
-                                    {[0, 1, 2, 3, 4].map(cIdx => (
-                                         <Reel3D
-                                             key={cIdx}
-                                             isSpinning={spinningReels[cIdx]}
-                                             symbols={grid[0] ? [ grid[0][cIdx], grid[1][cIdx], grid[2][cIdx] ] : []}
-                                         />
-                                    ))}
+                                    {[0, 1, 2, 3, 4].map(cIdx => {
+                                         const wRows = [];
+                                         if (winningCoordinates.has(`0,${cIdx}`)) wRows.push(0);
+                                         if (winningCoordinates.has(`1,${cIdx}`)) wRows.push(1);
+                                         if (winningCoordinates.has(`2,${cIdx}`)) wRows.push(2);
+
+                                         return (
+                                            <Reel3D
+                                                key={cIdx}
+                                                isSpinning={spinningReels[cIdx]}
+                                                symbols={grid[0] ? [ grid[0][cIdx], grid[1][cIdx], grid[2][cIdx] ] : []}
+                                                activeCombos={reelStatus === 'stopped' ? comboCues : []}
+                                                winningRows={reelStatus === 'stopped' ? wRows : []}
+                                            />
+                                         );
+                                    })}
                                 </div>
                             </div>
 
