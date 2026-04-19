@@ -810,161 +810,215 @@ export function RouletteGame({
   };
 
   return (
-    <div className="flex-1 flex flex-col lg:flex-row p-4 lg:p-12 gap-8 lg:gap-12 overflow-y-auto overflow-x-hidden bg-[#0a080d]">
+    <div className="flex-1 flex flex-col p-4 lg:p-8 gap-8 overflow-y-auto overflow-x-hidden bg-[#0a080d]">
       
-      {/* Visual Context */}
-      <div className="w-full lg:flex-1 flex flex-col gap-4 lg:gap-8 z-10 relative">
-        <div className="bg-gradient-to-br from-[#1c0000] to-[#0a0000] rounded-[24px] lg:rounded-[40px] w-full aspect-square lg:aspect-auto lg:flex-1 max-h-[350px] lg:max-h-none lg:min-h-[600px] shadow-[0_40px_100px_rgba(255,0,0,0.15)] overflow-hidden border border-red-900/40 relative flex items-center justify-center">
-          
-          <CanvasRoulette isSpinning={isSpinning} onResult={handleResult} spinTrigger={spinTrigger} />
+      {/* --- HEADER BANNER: Rias Gremory (Compact Full View with Decor) --- */}
+      <div className="w-full h-[250px] lg:h-[450px] shrink-0 rounded-[40px] border border-red-900/30 relative overflow-hidden group shadow-2xl bg-black flex items-center justify-center">
+        {/* Ambient Blurred Background */}
+        <img 
+          src="images/rias_roulette_ingame.jpg" 
+          aria-hidden="true"
+          referrerPolicy="no-referrer"
+          className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-20 scale-110 transition-transform duration-[5000ms] group-hover:scale-125" 
+        />
 
-          {/* Overlay UI removed as per user request */}
+        {/* --- DECORATIVE LAYERS --- */}
+        {/* Faint Background Motif */}
+        <div className="absolute inset-0 z-0 opacity-10 pointer-events-none select-none overflow-hidden">
+           <div className="absolute top-10 left-10 text-[120px] font-black text-red-500/20 italic tracking-tighter mix-blend-overlay">RIAS</div>
+           <div className="absolute bottom-10 right-10 text-[120px] font-black text-red-500/20 italic tracking-tighter mix-blend-overlay">GREMORY</div>
         </div>
 
-        {/* Live History Feed */}
-        <div className="bg-[#0f0000] rounded-2xl p-4 lg:p-6 flex items-center gap-4 lg:gap-6 border border-red-900/30 shadow-2xl overflow-hidden shrink-0">
-          <span className="hidden lg:block font-headline text-[#facc15]/60 text-[10px] font-black uppercase tracking-[0.4em] pl-4 border-r border-red-900/30 pr-10">Live Feed</span>
-          <div className="flex gap-4 overflow-x-auto no-scrollbar w-full min-h-[48px]">
-            {history.length === 0 && <span className="text-white/10 text-[10px] uppercase font-bold self-center">No spins yet</span>}
-            {history.map((n, i) => (
-              <motion.div
-                key={i}
-                initial={{ scale: 0, x: -20 }}
-                animate={{ scale: 1, x: 0 }}
-                className={cn(
-                  "w-10 h-10 lg:w-12 lg:h-12 rounded-full flex items-center justify-center font-headline font-black text-lg lg:text-xl shrink-0 border-2",
-                  n.type === 'red' ? "bg-red-900/40 text-white border-red-500/50 shadow-[0_0_10px_rgba(255,0,0,0.5)]" : "",
-                  n.type === 'black' ? "bg-black text-white border-white/10" : "",
-                  n.type === 'zero' ? "bg-yellow-900/20 text-[#facc15] border-[#facc15]/30 shadow-[0_0_10px_rgba(250,204,21,0.3)]" : ""
-                )}
-              >
-                {n.val}
-              </motion.div>
-            ))}
-          </div>
+        {/* Floating Decorative Elements */}
+        <div className="absolute inset-0 z-5 pointer-events-none overflow-hidden">
+           {/* Floating "Stars" / Sparkles */}
+           {[...Array(6)].map((_, i) => (
+             <motion.div
+               key={`star-${i}`}
+               initial={{ opacity: 0.1, scale: 0.5 }}
+               animate={{ 
+                 opacity: [0.1, 0.4, 0.1], 
+                 scale: [0.5, 1.2, 0.5],
+                 y: [0, -20, 0]
+               }}
+               transition={{ 
+                 duration: 4 + i, 
+                 repeat: Infinity, 
+                 delay: i * 0.5,
+                 ease: "easeInOut" 
+               }}
+               className="absolute"
+               style={{ 
+                 top: `${15 + (i * 15)}%`, 
+                 left: i % 2 === 0 ? `${5 + (i * 2)}%` : `${85 + (i * 2)}%` 
+               }}
+             >
+               <CircleDot className="text-[#facc15]/40" size={12 + i} />
+             </motion.div>
+           ))}
+
+           {/* Luxury Floating Chips (Decorative) */}
+           <motion.div 
+             animate={{ y: [0, -15, 0], rotate: [0, 5, 0] }}
+             transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+             className="absolute left-[8%] top-[20%] w-20 h-20 rounded-full border-4 border-dashed border-[#facc15]/10 flex items-center justify-center p-2 lg:block hidden"
+           >
+              <div className="w-full h-full rounded-full border border-[#facc15]/20 bg-gradient-to-br from-red-600/10 to-transparent flex items-center justify-center">
+                 <span className="font-headline font-black text-[8px] text-[#facc15]/20 uppercase tracking-widest leading-none text-center">Premium<br/>Stakes</span>
+              </div>
+           </motion.div>
+
+           <motion.div 
+             animate={{ y: [0, 15, 0], rotate: [0, -5, 0] }}
+             transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
+             className="absolute right-[8%] bottom-[20%] w-24 h-24 rounded-full border-4 border-dashed border-red-500/10 flex items-center justify-center p-2 lg:block hidden"
+           >
+              <div className="w-full h-full rounded-full border border-red-500/20 bg-gradient-to-br from-[#facc15]/10 to-transparent flex items-center justify-center">
+                 <span className="font-lobster font-black text-sm text-red-500/20 uppercase tracking-widest">VIP</span>
+              </div>
+           </motion.div>
+        </div>
+        
+        {/* Full Character Image */}
+        <img 
+          src="images/rias_roulette_ingame.jpg" 
+          alt="Rias Gremory Full Art" 
+          referrerPolicy="no-referrer"
+          className="relative z-10 w-full h-full object-contain p-4 drop-shadow-[0_0_40px_rgba(255,0,0,0.4)] transition-transform duration-[3000ms] group-hover:scale-[1.01]" 
+        />
+        
+        {/* Decorative Light Shading */}
+        <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/40 via-transparent to-black/10 pointer-events-none" />
+        
+        {/* Corner Branding (Faint) */}
+        <div className="absolute bottom-6 right-10 z-20 hidden lg:block opacity-30">
+           <div className="text-right flex flex-col items-end">
+              <span className="text-[8px] font-black uppercase tracking-[0.5em] text-[#facc15] mb-1">Authenticated Guest</span>
+              <div className="h-px w-20 bg-gradient-to-r from-transparent to-[#facc15]/40" />
+           </div>
         </div>
       </div>
 
-      {/* Interaction Panel */}
-      <div className="w-full lg:w-1/2 flex flex-col gap-6 lg:gap-8 z-10 shrink-0">
-        <div className="flex justify-between items-end px-2">
-          <div>
-            <div className="flex items-center gap-2 mb-2 lg:mb-4">
-              <div className="w-2 h-2 rounded-full bg-[#ff2a2a] animate-pulse shadow-[0_0_5px_rgba(255,42,42,0.8)]" />
-              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#ff2a2a]">Betting board</span>
-            </div>
-            <h1 className="font-lobster text-5xl lg:text-6xl font-black text-white tracking-wider leading-none mb-2 drop-shadow-[0_0_15px_rgba(255,0,0,0.5)]">ROULETTE <span className="text-[#facc15]">ROYALE</span></h1>
+      {/* --- GAMEPLAY AREA --- */}
+      <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        
+        {/* Left Column: Wheel & History */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          <div className="bg-gradient-to-br from-[#1c0000] to-[#0a0000] rounded-[40px] w-full aspect-square shadow-[0_40px_100px_rgba(255,0,0,0.15)] overflow-hidden border border-red-900/40 relative flex items-center justify-center">
+            <CanvasRoulette isSpinning={isSpinning} onResult={handleResult} spinTrigger={spinTrigger} />
+          </div>
+
+          {/* History Feed */}
+          <div className="bg-[#0f0000] rounded-[32px] p-6 border border-red-900/30 shadow-xl overflow-hidden h-20 flex items-center gap-6">
+             <span className="font-headline text-white/20 text-[9px] font-black uppercase tracking-[0.4em] pl-2 border-r border-red-900/20 pr-6 shrink-0">Recent</span>
+             <div className="flex gap-3 overflow-x-auto no-scrollbar">
+                {history.map((n, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ scale: 0, x: -20 }}
+                    animate={{ scale: 1, x: 0 }}
+                    className={cn(
+                      "w-10 h-10 rounded-full flex items-center justify-center font-headline font-black text-lg shrink-0 border-2 shadow-lg",
+                      n.type === 'red' ? "bg-red-900/40 text-white border-red-500/50" : "",
+                      n.type === 'black' ? "bg-black text-white border-white/10" : "",
+                      n.type === 'zero' ? "bg-yellow-900/20 text-[#facc15] border-[#facc15]/30" : ""
+                    )}
+                  >
+                    {n.val}
+                  </motion.div>
+                ))}
+             </div>
           </div>
         </div>
 
-        {/* Bets Visualizer Grid */}
-        <div className="bg-[#0f0000] w-full rounded-[32px] p-2 lg:p-6 border border-red-900/30 shadow-2xl flex flex-col relative">
-          <BettingBoard 
-              bets={bets} 
-              players={players}
-              activePlayerId={activePlayerId} 
-              chipValue={selectedChip} 
-              onPlaceBet={handlePlaceBet}
-              disabled={isSpinning || result !== null}
-          />
+        {/* Right Column: Betting Board & Actions */}
+        <div className="lg:col-span-7 flex flex-col gap-6 lg:gap-8">
           
-          <AnimatePresence>
-            {result !== null && (
-              <motion.div
-                initial={{ scale: 0.8, opacity: 0 }} 
-                animate={{ scale: 1, opacity: 1 }} 
-                exit={{ scale: 0.8, opacity: 0 }}
-                className="absolute inset-4 bg-black/95 backdrop-blur-2xl border-4 border-secondary/20 rounded-[28px] p-8 lg:p-10 text-center z-50 flex flex-col justify-center items-center shadow-2xl overflow-y-auto"
-              >
-                <div className={cn("text-[100px] lg:text-[120px] font-lobster font-black leading-none mb-4 drop-shadow-[0_0_20px_rgba(255,42,42,0.6)]", 
-                  getNumberColor(result) === 'red' ? "text-red-500" : getNumberColor(result) === 'zero' ? "text-[#facc15] drop-shadow-[0_0_20px_rgba(250,204,21,0.6)]" : "text-white"
-                )}>{result}</div>
-                {/* Payouts Overlay */}
-                <div className="w-full max-w-sm mt-4 space-y-2">
-                    {players.map(p => {
-                        const gains = payoutsData.find(r => r.playerId === p.id);
-                        if (!gains || gains.winnings === 0) return null;
-                        return (
-                            <div key={p.id} className="flex justify-between items-center bg-red-900/20 p-3 rounded-xl border border-red-500/30">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: p.color }} />
-                                    <span className="font-bold text-white text-sm">{p.name} Won!</span>
-                                </div>
-                                <span className="text-[#facc15] font-black text-lg">+${gains.winnings}</span>
-                            </div>
-                        )
-                    })}
+          {/* Betting Board Card */}
+          <div className="bg-[#0f0000] w-full rounded-[40px] p-6 lg:p-8 border border-red-900/30 shadow-2xl relative overflow-hidden min-h-[450px]">
+            <BettingBoard 
+                bets={bets} 
+                players={players}
+                activePlayerId={activePlayerId} 
+                chipValue={selectedChip} 
+                onPlaceBet={handlePlaceBet}
+                disabled={isSpinning || result !== null}
+            />
+            
+            <AnimatePresence>
+              {result !== null && (
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }} 
+                  animate={{ scale: 1, opacity: 1 }} 
+                  exit={{ scale: 0.8, opacity: 0 }}
+                  className="absolute inset-4 bg-black/95 backdrop-blur-2xl border-4 border-secondary/20 rounded-[32px] p-8 text-center z-50 flex flex-col justify-center items-center shadow-2xl"
+                >
+                  <div className={cn("text-[120px] font-lobster font-black leading-none mb-4 drop-shadow-[0_0_30px_rgba(255,42,42,0.6)]", 
+                    getNumberColor(result) === 'red' ? "text-red-500" : getNumberColor(result) === 'zero' ? "text-[#facc15]" : "text-white"
+                  )}>{result}</div>
+                  <div className="w-full max-w-sm space-y-2">
+                      {players.map(p => {
+                          const gains = payoutsData.find(r => r.playerId === p.id);
+                          if (!gains || gains.winnings === 0) return null;
+                          return (
+                              <div key={p.id} className="flex justify-between items-center bg-red-500/10 p-3 rounded-xl border border-red-500/20">
+                                  <span className="font-bold text-white text-sm">{p.name} Won!</span>
+                                  <span className="text-[#facc15] font-black text-xl">+${gains.winnings}</span>
+                              </div>
+                          )
+                      })}
+                  </div>
+                  <button onClick={dismissResult} className="mt-8 text-white/30 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors">Dismiss Table</button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Controls Hook */}
+          <div className="bg-[#120000] rounded-[40px] p-8 border border-red-900/30 shadow-xl">
+             <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
+                {/* Chip Selection */}
+                <div className="flex items-center gap-3">
+                  {CHIPS.map(c => (
+                    <button 
+                      key={c} 
+                      onClick={() => setSelectedChip(c)} 
+                      className={cn(
+                        "w-12 h-12 lg:w-14 lg:h-14 rounded-full flex items-center justify-center font-headline font-black transition-all text-xs lg:text-base border-2", 
+                        selectedChip === c 
+                          ? "bg-[#facc15] text-black border-[#facc15] shadow-[0_0_20px_rgba(250,204,21,0.5)] scale-110" 
+                          : "bg-white/5 text-white/30 border-white/10 hover:bg-white/10"
+                      )}
+                    >
+                      {c}
+                    </button>
+                  ))}
                 </div>
 
-                <button onClick={dismissResult} className="mt-8 lg:mt-10 text-white/30 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors p-4">Dismiss & Clear</button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Spin Actions */}
-        <div className="bg-[#0f0000] rounded-[32px] p-4 lg:p-6 border border-red-900/30 shadow-[0_0_30px_rgba(255,0,0,0.1)]">
-          <div className="flex flex-wrap justify-center items-center gap-2 lg:gap-4 mb-6 lg:mb-8">
-            {CHIPS.map(c => (
-              <button 
-                key={c} 
-                onClick={() => setSelectedChip(c)} 
-                className={cn(
-                  "w-10 h-10 lg:w-14 lg:h-14 rounded-full flex items-center justify-center font-headline font-black transition-all text-xs lg:text-base shrink-0", 
-                  selectedChip === c 
-                    ? "bg-[#facc15] text-black scale-110 shadow-[0_0_20px_rgba(250,204,21,0.5)]" 
-                    : "bg-white/5 text-white/30 border border-white/10 hover:bg-white/10 hover:text-white/60"
-                )}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-4">
-                <button 
-                  onClick={handleRepeatBet}
-                  disabled={isSpinning || previousBets.length === 0 || bets.length > 0}
-                  className="flex items-center justify-center gap-2 bg-white/5 text-white/40 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-white/10 hover:text-white border border-white/5 transition-all disabled:opacity-10"
-                >
-                  <RotateCcw size={14} /> Repeat Last
-                </button>
-                <button 
-                  onClick={handleDoubleBet}
-                  disabled={isSpinning || bets.length === 0}
-                  className="flex items-center justify-center gap-2 bg-yellow-900/10 text-[#facc15]/40 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-yellow-900/20 hover:text-[#facc15] border border-yellow-900/20 transition-all disabled:opacity-10"
-                >
-                  <Play size={14} className="rotate-90 scale-x-[-1]" /> Double Bet
-                </button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 lg:gap-4">
-                <button 
-                onClick={clearBets} 
-                disabled={isSpinning || bets.length === 0 || result !== null}
-                className="group flex flex-col items-center justify-center gap-1 bg-white/5 text-white/30 py-4 rounded-2xl font-black text-[9px] hover:bg-white/10 hover:text-white border border-white/10 transition-all uppercase tracking-widest disabled:opacity-20"
-                >
-                <RotateCcw size={16} className="group-hover:rotate-[-90deg] transition-transform" /> Clear
-                </button>
-                <button 
-                onClick={undoLastBet}
-                disabled={isSpinning || bets.length === 0 || result !== null}
-                className="flex flex-col items-center justify-center gap-1 bg-red-900/10 text-red-500/40 py-4 rounded-2xl font-black text-[9px] hover:bg-red-900/20 hover:text-red-400 border border-red-900/30 transition-all uppercase tracking-widest disabled:opacity-20"
-                >
-                <Undo size={16} /> Undo
-                </button>
-                <button 
-                onClick={startSpin} disabled={isSpinning || bets.length === 0 || result !== null}
-                className={cn(
-                    "bg-gradient-to-br from-red-500 to-red-800 text-white rounded-2xl font-lobster font-black text-lg flex flex-col items-center justify-center transition-all border-b-4 border-red-900", 
-                    (isSpinning || bets.length === 0 || result !== null) ? "opacity-30 cursor-not-allowed grayscale border-b-0 translate-y-1" : "hover:from-red-400 hover:to-red-700 active:scale-95 active:border-b-0 active:translate-y-1 shadow-[0_15px_40px_rgba(255,42,42,0.4)]"
-                )}
-                >
-                {isSpinning ? <RotateCcw size={20} className="animate-spin" /> : <Play size={20} fill="currentColor" />}
-                <span className="text-[10px] tracking-widest uppercase font-sans mt-1">{isSpinning ? 'SPINNING' : 'SPIN'}</span>
-                </button>
-            </div>
+                {/* Main Action Buttons */}
+                <div className="flex items-center gap-4 w-full lg:w-auto">
+                    <button 
+                      onClick={clearBets} 
+                      className="bg-white/5 hover:bg-white/10 text-white/40 p-5 rounded-2xl border border-white/10"
+                      disabled={isSpinning || bets.length === 0}
+                    >
+                      <RotateCcw size={20} />
+                    </button>
+                    <button 
+                      onClick={startSpin}
+                      disabled={isSpinning || bets.length === 0 || result !== null}
+                      className={cn(
+                        "flex-1 lg:flex-none lg:w-56 h-16 rounded-2xl font-lobster text-2xl font-black text-white transition-all shadow-xl flex items-center justify-center gap-3 border-b-4",
+                        (isSpinning || bets.length === 0 || result !== null) 
+                          ? "bg-white/5 border-white/10 opacity-30 cursor-not-allowed" 
+                          : "bg-gradient-to-r from-red-600 to-red-800 border-red-900 hover:scale-[1.02] active:scale-95 shadow-red-900/40"
+                      )}
+                    >
+                      {isSpinning ? <RotateCcw size={24} className="animate-spin" /> : <Play size={24} fill="currentColor" />}
+                      <span>{isSpinning ? 'SPINNING' : 'SPIN'}</span>
+                    </button>
+                </div>
+             </div>
           </div>
         </div>
       </div>
