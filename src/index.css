@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Epilogue:wght@300;400;600;700;800;900&family=Manrope:wght@300;400;500;600;700&family=Lobster&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-headline: "Epilogue", sans-serif;
+  --font-body: "Manrope", sans-serif;
+  --font-lobster: "Lobster", cursive;
+  
+  --color-surface: #14121c;
+  --color-surface-container-low: #1c1a25;
+  --color-surface-container: #211e29;
+  --color-surface-container-high: #2b2834;
+  --color-surface-container-highest: #36333f;
+  --color-primary: #cdbdff;
+  --color-secondary: #e9c349;
+  --color-tertiary: #00daf3;
+  --color-on-surface: #e6e0ef;
+}
+
+@layer base {
+  body {
+    @apply bg-surface text-on-surface font-body selection:bg-primary/30;
+  }
+}
+
+.glass-panel {
+  background: rgba(33, 30, 41, 0.6);
+  backdrop-filter: blur(20px);
+}
+
+.perspective-1000 {
+  perspective: 1000px;
+}
+
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
