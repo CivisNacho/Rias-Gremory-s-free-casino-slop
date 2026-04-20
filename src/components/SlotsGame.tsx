@@ -354,8 +354,16 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
     
     const audio = useSlotsAudio();
     const spinIntervalRef = useRef<any>(null);
+    const stopTimeoutsRef = useRef<any[]>([]);
 
     const occupiedCharms = useMemo(() => Object.values(playerCharms), [playerCharms]);
+
+    useEffect(() => {
+        return () => {
+            if (spinIntervalRef.current) clearInterval(spinIntervalRef.current);
+            stopTimeoutsRef.current.forEach(t => clearTimeout(t));
+        };
+    }, []);
 
     useEffect(() => {
         if (isAllInMode) {
@@ -588,9 +596,12 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         spinIntervalRef.current = setInterval(() => audio.playTick(), 60);
 
         // Cascade Stop Logic: Deliberate one-by-one sequence
-        setTimeout(() => {
+        stopTimeoutsRef.current.forEach(t => clearTimeout(t));
+        stopTimeoutsRef.current = [];
+
+        const mainPusher = setTimeout(() => {
             [0, 1, 2, 3, 4].forEach(colIndex => {
-                setTimeout(() => {
+                const subTimer = setTimeout(() => {
                     setSpinningReels(prev => {
                         const next = [...prev];
                         next[colIndex] = false;
@@ -604,8 +615,10 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                         calculateWin(newGrid, currentBetAmount, earnedFreeSpins, finalLuck);
                     }
                 }, colIndex * 650); // Increased delay to 650ms for a very distinct one-by-one feel
+                stopTimeoutsRef.current.push(subTimer);
             });
         }, 1200); // 1.2s spin duration before stopping sequence begins
+        stopTimeoutsRef.current.push(mainPusher);
 
     }, [reelStatus, players, selectedBet, luckLevel, luckDuration, playerCharms, audio, freeSpinsRemaining, isAllInMode, isAutoSpinning, activePlayer.id]);
 
@@ -829,6 +842,8 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                                 <img 
                                    src={luckLevel === 'luckiest' ? "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/rias_best_luck.jpg" : luckLevel === 'lucky' ? "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/rias_lucky.jpg" : "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/rias_normal.webp"} 
                                    alt="Rias Gremory" 
+                                   loading="eager"
+                                   decoding="sync"
                                    referrerPolicy="no-referrer"
                                    className="w-full h-full object-cover transition-all duration-700 group-hover:scale-110" 
                                 />

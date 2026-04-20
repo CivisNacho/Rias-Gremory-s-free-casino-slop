@@ -26,6 +26,17 @@ const games: Game[] = [
     status: 'hot',
     players: 666,
     jackpot: '$1.25M'
+  },
+  {
+    id: 'poker',
+    title: '4 CARD POKER',
+    description: 'Master the elite 4-card strategy in a high-stakes duel.',
+    image: 'https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/poker_icon.jpg',
+    minBet: 100,
+    maxBet: 50000,
+    type: 'table',
+    status: 'new',
+    players: 128
   }
 ];
 
@@ -51,13 +62,15 @@ export const Lobby = ({ onNavigate }: { onNavigate: (p: Page) => void }) => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            onClick={() => (game.id === 'slots' || game.id === 'roulette') && onNavigate(game.id as Page)}
+            onClick={() => onNavigate(game.id as Page)}
             className="group relative h-[480px] rounded-[40px] overflow-hidden cursor-pointer bg-surface-container-high border-2 border-outline-variant/5 hover:border-secondary/30 transition-all hover:-translate-y-3 shadow-xl"
           >
             <div className="absolute inset-0 z-0">
               <img 
                 src={game.image} 
                 alt={game.title} 
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover opacity-70 group-hover:opacity-100 group-hover:scale-110 transition-all duration-1000 ease-in-out"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-surface via-surface/40 to-transparent opacity-90" />

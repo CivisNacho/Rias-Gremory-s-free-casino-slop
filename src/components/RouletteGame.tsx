@@ -419,8 +419,10 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
     };
 
     const loop = (time: number) => {
-        const targetFps = 1000 / 60;
-        const dt = (time - lastTime) / targetFps;
+        if (!lastTime) lastTime = time;
+        // Limit delta time to catch nasty lag spikes (max 0.1s step)
+        const dtRaw = (time - lastTime) / (1000 / 60);
+        const dt = Math.min(dtRaw, 6.0); 
         lastTime = time;
 
         const cx = canvas.width / 2;
@@ -428,6 +430,21 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
         // Keep a margin for the stroke
         const maxRadius = Math.min(cx, cy) - 15; 
         const st = state.current;
+
+        // Skip rendering if visually settled and idle state to save power
+        if (st.phase === 'SETTLED' && st.wheelSpeed === 0 && !st.ball.jitter) {
+            // Draw one final crisp frame then stop requesting frames until triggered
+            if (!st.reportedResult) {
+               ctx.fillStyle = '#120f18';
+               ctx.fillRect(0, 0, canvas.width, canvas.height);
+               drawWheel(cx, cy, maxRadius, st.wheelAngle);
+               drawBall(cx, cy, st.ball);
+               st.reportedResult = true;
+               onResult(WHEEL_NUMBERS[st.settleIndex]);
+            }
+            requestRef.current = requestAnimationFrame(loop);
+            return;
+        }
 
         // Use a nice dark background matching the UI
         ctx.fillStyle = '#120f18';
@@ -632,11 +649,9 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
                 st.ball.y = targetY;
             }
 
-            // When wheel almost stops completely, trigger result
+            // When wheel almost stops completely, finish settling
             if (st.wheelSpeed < 0.002 && isSpinning && !st.reportedResult) {
-                st.wheelSpeed = 0; // Stop completely
-                st.reportedResult = true;
-                onResult(WHEEL_NUMBERS[st.settleIndex]);
+                st.wheelSpeed = 0; // Stop completely, drawing block at top of loop will trigger onResult next frame.
             }
         }
 
@@ -818,6 +833,8 @@ export function RouletteGame({
         <img 
           src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/rias_roulette_ingame.jpg" 
           aria-hidden="true"
+          loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-20 scale-110 transition-transform duration-[5000ms] group-hover:scale-125" 
         />
@@ -883,6 +900,8 @@ export function RouletteGame({
         <img 
           src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/rias_roulette_ingame.jpg" 
           alt="Rias Gremory Full Art" 
+          fetchPriority="high"
+          decoding="sync"
           referrerPolicy="no-referrer"
           className="relative z-10 w-full h-full object-contain p-4 drop-shadow-[0_0_40px_rgba(255,0,0,0.4)] transition-transform duration-[3000ms] group-hover:scale-[1.01]" 
         />

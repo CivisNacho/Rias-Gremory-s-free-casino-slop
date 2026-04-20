@@ -21,6 +21,7 @@ import { PLAYER_COLORS, RoulettePlayer } from './lib/rouletteUtils';
 import { Lobby } from './components/Lobby';
 import { RouletteGame } from './components/RouletteGame';
 import { SlotsGame } from './components/SlotsGame';
+import { PokerGame } from './components/PokerGame';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('lobby');
@@ -138,6 +139,16 @@ export default function App() {
                 )}
                 {currentPage === 'slots' && (
                   <SlotsGame 
+                    players={players} 
+                    activePlayerId={activePlayerId} 
+                    setPlayers={setPlayers} 
+                    setActivePlayerId={setActivePlayerId}
+                    onAddPlayer={addPlayer}
+                    onExit={() => setCurrentPage('lobby')}
+                  />
+                )}
+                {currentPage === 'poker' && (
+                  <PokerGame 
                     players={players} 
                     activePlayerId={activePlayerId} 
                     setPlayers={setPlayers} 
