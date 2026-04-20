@@ -166,6 +166,7 @@ interface PokerPlayerState {
     result?: string;
     payout?: number;
     handResult?: HandResult;
+    sessionProfit: number;
 }
 
 interface PokerGameProps {
@@ -192,6 +193,42 @@ const CARD_SUIT_COLOR = {
 };
 
 // --- Sub-components ---
+
+const cardWrapperVariants: import('framer-motion').Variants = {
+  initial: ({ isPlayerCard, isDealerCard, index }) => ({
+    y: isPlayerCard ? -600 : (isDealerCard ? -50 : 80),
+    x: isDealerCard ? 300 : (isPlayerCard ? (index - 2) * 50 : 0),
+    opacity: 0,
+    rotateZ: isDealerCard ? -45 : 0,
+    scale: 0.5,
+    zIndex: 0
+  }),
+  animate: ({ faceUp, winning, index, small }) => ({
+    y: faceUp ? Math.abs(index - (small ? 2.5 : 2)) * 8 : Math.abs(index - (small ? 2.5 : 2)) * 4 + 5,
+    x: 0,
+    opacity: 1,
+    scale: winning ? 1.05 : 1,
+    rotateZ: faceUp ? (index - (small ? 2.5 : 2)) * (small ? -2 : 6) : (index - (small ? 2.5 : 2)) * 2,
+    zIndex: faceUp ? 10 : 0
+  }),
+  hover: ({ index, small }) => ({
+    y: -10,
+    rotateZ: (index - (small ? 2.5 : 2)) * (small ? 0 : 3),
+    scale: 1.02,
+    zIndex: 30
+  }),
+  tap: {
+    scale: 0.98,
+    y: 0
+  }
+};
+
+const cardFlipVariants: import('framer-motion').Variants = {
+  initial: { rotateY: 180 },
+  animate: ({ faceUp }) => ({
+    rotateY: faceUp ? 0 : 180
+  })
+};
 
 const PlayingCard = ({ 
   card, 
@@ -228,103 +265,118 @@ const PlayingCard = ({
     useEffect(() => {
         if (!prevFaceUp.current && faceUp && onReveal) {
             setTimeout(onReveal, index * 40); 
-            hasThudded.current = false; // Reset thud for the reveal animation
+            hasThudded.current = false;
         }
         prevFaceUp.current = faceUp;
     }, [faceUp, onReveal, index]);
 
     return (
         <motion.div
-            initial={{ 
-                y: isPlayerCard ? -600 : (isDealerCard ? -50 : 80), 
-                x: isDealerCard ? 300 : (isPlayerCard ? (index - 2) * 50 : 0),
-                opacity: 0, 
-                rotateY: 180, 
-                rotateZ: isDealerCard ? -45 : 0,
-                scale: 0.5, 
-                zIndex: 0 
+            custom={{ isPlayerCard, isDealerCard, index, faceUp, winning, small }}
+            variants={cardWrapperVariants}
+            initial="initial"
+            animate="animate"
+            whileHover="hover"
+            whileTap="tap"
+            onAnimationStart={(definition) => {
+                if (typeof definition === 'string' && definition === 'animate' && isPlayerCard && onReveal) {
+                    setTimeout(onReveal, (index * 200) + 400);
+                }
             }}
-            animate={{ 
-                y: faceUp ? Math.abs(index - (small ? 2.5 : 2)) * 8 : Math.abs(index - (small ? 2.5 : 2)) * 4 + 5, 
-                x: 0,
-                opacity: 1, 
-                rotateY: faceUp ? 0 : 180,
-                scale: winning ? 1.05 : 1,
-                rotateZ: faceUp ? (index - (small ? 2.5 : 2)) * (small ? -2 : 6) : (index - (small ? 2.5 : 2)) * 2,
-                zIndex: faceUp ? 10 : 0
-            }}
-            whileHover={{ y: -10, rotateZ: (index - (small ? 2.5 : 2)) * (small ? 0 : 3), scale: 1.02, zIndex: 30 }}
-
-            whileTap={{ scale: 0.98, y: 0 }}
             onAnimationComplete={(definition) => {
-                // Ensure thud only triggers once when relevant properties reach their target
-                if (typeof definition === 'object' && ('y' in definition || 'rotateY' in definition)) {
+                if (definition === 'animate') {
                     if (onThud && !hasThudded.current) {
                        onThud();
                        hasThudded.current = true;
                     }
                 }
             }}
-            transition={{ 
-                delay: index * 0.04, 
-                type: 'spring', 
-                damping: 22, 
-                stiffness: 180, 
-                mass: 1.5, 
-                restDelta: 0.001
+            transition={{
+                type: 'tween',
+                ease: 'easeOut',
+                duration: 0.55,
+                delay: isPlayerCard ? index * 0.15 : index * 0.08
             }}
             className={cn(
-                "relative rounded-xl shadow-2xl transition-all duration-300 transform-gpu preserve-3d group cursor-pointer",
+                "relative transition-shadow duration-300 transform-gpu group cursor-pointer",
                 small ? "w-10 h-14 lg:w-14 lg:h-20" : "w-20 h-28 lg:w-32 lg:h-44",
-                winning ? "ring-4 ring-cyan-400 ring-offset-4 ring-offset-slate-950 z-20" : "",
-                royalPick ? "ring-2 ring-cyan-400 scale-105 z-20 shadow-[0_0_30px_rgba(34,211,238,0.4)]" : ""
+                winning ? "ring-4 ring-cyan-400 ring-offset-4 ring-offset-slate-950 z-20 rounded-xl" : "",
+                royalPick ? "ring-2 ring-cyan-400 scale-105 z-20 shadow-[0_0_30px_rgba(34,211,238,0.4)] rounded-xl" : ""
             )}
-            style={{ transformStyle: 'preserve-3d' }}
+            style={{ 
+              willChange: 'transform, opacity',
+              perspective: '1200px'
+            }}
         >
-            {/* Front */}
-            <div className={cn(
-                "absolute inset-0 [backface-visibility:hidden] bg-white rounded-xl flex flex-col justify-between p-1 lg:p-2 shadow-inner",
-                card ? CARD_SUIT_COLOR[card.suit] : 'text-slate-900'
-            )}
-            style={{ transform: 'translateZ(1px)' }}>
-                <div className="flex flex-col items-start leading-[0.8] p-0.5">
-                    <span className={cn("font-black tracking-tighter", small ? "text-[10px]" : "text-sm lg:text-2xl")}>{card?.rank}</span>
-                    <span className={cn(small ? "text-[8px]" : "text-[10px] lg:text-sm")}>{card && SUIT_SYMBOL[card.suit]}</span>
-                </div>
-                
-                {royalPick && !small && (
-                  <div className="absolute top-1 right-1 bg-cyan-400 text-[6px] lg:text-[8px] font-black text-black px-1 py-0.5 rounded-sm uppercase tracking-tighter shadow-sm">
-                    Royal
-                  </div>
-                )}
-
-                <div className={cn("flex justify-center grow items-center select-none leading-none", small ? "text-sm" : "text-2xl lg:text-5xl")}>
-                   {card && SUIT_SYMBOL[card.suit]}
-                </div>
-
-                <div className="flex flex-col items-start leading-[0.8] rotate-180 p-0.5">
-                    <span className={cn("font-black tracking-tighter", small ? "text-[10px]" : "text-sm lg:text-2xl")}>{card?.rank}</span>
-                    <span className={cn(small ? "text-[8px]" : "text-[10px] lg:text-sm")}>{card && SUIT_SYMBOL[card.suit]}</span>
-                </div>
-            </div>
-            {/* Back */}
-            <div 
-                className="absolute inset-0 [backface-visibility:hidden] bg-[#121016] rounded-xl overflow-hidden border border-white/10 shadow-inner"
-                style={{ transform: 'rotateY(180deg) translateZ(1px)' }}
+            <motion.div
+              custom={{ faceUp }}
+              variants={cardFlipVariants}
+              initial="initial"
+              animate="animate"
+              transition={{
+                  type: 'tween',
+                  ease: 'easeInOut',
+                  duration: 0.5,
+                  delay: isPlayerCard ? (index * 0.15) + 0.4 : index * 0.08
+              }}
+              className="w-full h-full rounded-xl shadow-2xl relative"
+              style={{
+                transformStyle: 'preserve-3d'
+              }}
             >
-                <img 
-                    src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/issei_poker_back.jpg" 
-                    onError={(e) => { e.currentTarget.src = "https://picsum.photos/seed/issei/400/600" }}
-                    className="w-full h-full object-cover opacity-80"
-                    referrerPolicy="no-referrer"
-                    alt="Card Back"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-[#121016] via-transparent to-transparent opacity-60" />
-                <div className={cn("absolute inset-0 flex items-center justify-center text-white/20 font-lobster rotate-45 select-none tracking-widest", small ? "text-[8px]" : "text-xs lg:text-xl")}>
-                    NOCTURNE
+                {/* Front */}
+                <div className={cn(
+                    "absolute inset-0 bg-white rounded-xl flex flex-col justify-between p-1 lg:p-2 shadow-inner",
+                    card ? CARD_SUIT_COLOR[card.suit] : 'text-slate-900'
+                )}
+                style={{ 
+                  transform: 'translateZ(1px)', 
+                  backfaceVisibility: 'hidden', 
+                  WebkitBackfaceVisibility: 'hidden'
+                }}>
+                    <div className="flex flex-col items-start leading-[0.8] p-0.5">
+                        <span className={cn("font-black tracking-tighter", small ? "text-[10px]" : "text-sm lg:text-2xl")}>{card?.rank}</span>
+                        <span className={cn(small ? "text-[8px]" : "text-[10px] lg:text-sm")}>{card && SUIT_SYMBOL[card.suit]}</span>
+                    </div>
+                    
+                    {royalPick && !small && (
+                      <div className="absolute top-1 right-1 bg-cyan-400 text-[6px] lg:text-[8px] font-black text-black px-1 py-0.5 rounded-sm uppercase tracking-tighter shadow-sm">
+                        Royal
+                      </div>
+                    )}
+
+                    <div className={cn("flex justify-center grow items-center select-none leading-none", small ? "text-sm" : "text-2xl lg:text-5xl")}>
+                       {card && SUIT_SYMBOL[card.suit]}
+                    </div>
+
+                    <div className="flex flex-col items-start leading-[0.8] rotate-180 p-0.5">
+                        <span className={cn("font-black tracking-tighter", small ? "text-[10px]" : "text-sm lg:text-2xl")}>{card?.rank}</span>
+                        <span className={cn(small ? "text-[8px]" : "text-[10px] lg:text-sm")}>{card && SUIT_SYMBOL[card.suit]}</span>
+                    </div>
                 </div>
-                <div className="absolute inset-2 border border-white/10 rounded-lg pointer-events-none" />
-            </div>
+                {/* Back */}
+                <div 
+                    className="absolute inset-0 bg-[#1a1625] rounded-xl overflow-hidden border border-white/20 shadow-inner"
+                    style={{ 
+                      transform: 'rotateY(180deg) translateZ(1px)', 
+                      backfaceVisibility: 'hidden', 
+                      WebkitBackfaceVisibility: 'hidden'
+                    }}
+                >
+                    <img 
+                        src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/issei_poker_back.jpg" 
+                        onError={(e) => { e.currentTarget.src = "https://picsum.photos/seed/issei/400/600" }}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                        alt="Card Back"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#121016] via-transparent to-transparent opacity-80" />
+                    <div className={cn("absolute inset-0 flex items-center justify-center text-white/40 font-lobster rotate-45 select-none tracking-widest", small ? "text-[8px]" : "text-xs lg:text-xl")}>
+                        NOCTURNE
+                    </div>
+                    <div className="absolute inset-2 border border-white/20 rounded-lg pointer-events-none" />
+                </div>
+            </motion.div>
         </motion.div>
     );
 };
@@ -367,7 +419,8 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                 ante: 0,
                 play: 0,
                 acesUp: 0,
-                folded: false
+                folded: false,
+                sessionProfit: 0
             }));
 
             const botsNeeded = 4 - currentPokerPlayers.length;
@@ -380,7 +433,8 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     ante: 0,
                     play: 0,
                     acesUp: 0,
-                    folded: false
+                    folded: false,
+                    sessionProfit: 0
                 });
             }
             return currentPokerPlayers;
@@ -562,6 +616,9 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                 const anteBonus = getAnteBonusPayout(pBest.rank);
                 if (anteBonus > 0) winnings += p.ante * anteBonus;
 
+                const roundCost = p.ante + (p.play || 0) + p.acesUp;
+                const roundProfit = winnings - roundCost;
+
                 if (!p.isBot) {
                     setPlayers(prev => prev.map(player => player.id === p.id ? { ...player, balance: player.balance + winnings } : player));
                     if (winnings > 0) {
@@ -580,7 +637,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     }
                 }
 
-                return { ...p, payout: winnings, result: resultText, handResult: pBest };
+                return { ...p, payout: winnings, result: resultText, handResult: pBest, sessionProfit: p.sessionProfit + roundProfit };
             });
 
             setPokerPlayers(results);
@@ -669,8 +726,94 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                       <div className="absolute inset-0 bg-gradient-to-t from-[#0d0912] via-transparent to-[#0d0912] opacity-80" />
                     </div>
 
-                    <div className="relative z-10 flex-1 flex flex-col items-center justify-around py-6 lg:py-24">
+                    <div className="relative z-10 flex-1 flex flex-col items-center py-6 lg:py-12 gap-8 overflow-y-auto no-scrollbar">
                       
+                      {/* Game Session Leaderboard - "The Top Banner" */}
+                      <div className="w-full max-w-5xl px-4 lg:px-0">
+                         <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-2xl p-4 lg:p-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)] flex flex-col lg:flex-row items-center justify-between gap-6 overflow-hidden relative group">
+                            <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            
+                            <div className="flex items-center gap-4 lg:gap-8 shrink-0 relative z-10">
+                              <div className="w-12 h-12 lg:w-16 lg:h-16 rounded-2xl bg-gradient-to-br from-yellow-400 to-yellow-600 flex items-center justify-center shadow-lg shadow-yellow-500/20">
+                                <Trophy size={24} className="text-white lg:w-8 lg:h-8" />
+                              </div>
+                              <div>
+                                <h2 className="text-xl lg:text-3xl font-black italic tracking-tighter text-white uppercase leading-none">Session <span className="text-yellow-500">Standings</span></h2>
+                                <p className="text-[9px] lg:text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mt-1">Live Game Tracking</p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap justify-center items-center gap-2 lg:gap-6 flex-1 relative z-10">
+                                {[...pokerPlayers].sort((a, b) => b.sessionProfit - a.sessionProfit).map((p, i) => (
+                                    <div key={p.id} className={cn(
+                                        "flex items-center gap-3 px-4 py-2 rounded-xl transition-all border",
+                                        p.id === activePlayerId ? "bg-cyan-500/10 border-cyan-500/30 scale-105 shadow-lg shadow-cyan-500/5" : "bg-white/5 border-white/5 opacity-60 hover:opacity-100"
+                                    )}>
+                                        <div className={cn(
+                                            "w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black",
+                                            i === 0 ? "bg-yellow-500 text-black" : "bg-white/10 text-white/40"
+                                        )}>
+                                            {i + 1}
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-black uppercase text-white/80 tracking-tight leading-tight">{p.name}</span>
+                                            <span className={cn(
+                                                "text-[9px] font-black font-mono",
+                                                p.sessionProfit >= 0 ? "text-green-400" : "text-red-400"
+                                            )}>
+                                                {p.sessionProfit >= 0 ? '+' : ''}${Math.abs(p.sessionProfit).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="flex flex-col items-end gap-1 shrink-0 relative z-10 hidden sm:flex">
+                                <div className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg">
+                                   <span className="text-[9px] font-black uppercase tracking-[0.2em] text-yellow-500/80">Dealer Qualifies: <span className="text-white">King High</span></span>
+                                </div>
+                                <div className="text-[8px] font-black uppercase tracking-widest text-white/20 mt-1">Hand #142 • Table A-12</div>
+                            </div>
+                         </div>
+                      </div>
+
+                      {/* Opponents Area */}
+                      <div className="absolute top-[20%] left-4 lg:left-12 flex flex-col gap-12 scale-[0.6] lg:scale-90 origin-left">
+                         {pokerPlayers.filter(p => p.isBot).slice(0, 2).map((bot, idx) => (
+                           <div key={idx} className="flex flex-col gap-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-full bg-cyan-400/20 border border-cyan-400/40 flex items-center justify-center text-[10px] font-black text-cyan-400">
+                                  {bot.name[0]}
+                                </div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-white/60">{bot.name}</span>
+                              </div>
+                              <div className="flex -space-x-8">
+                                {bot.cards.map((c, ci) => (
+                                  <PlayingCard key={ci} card={c} index={ci} faceUp={gameState === 'showdown' || gameState === 'payout'} small={true} />
+                                ))}
+                              </div>
+                           </div>
+                         ))}
+                      </div>
+
+                      <div className="absolute top-[20%] right-4 lg:right-12 flex flex-col gap-12 scale-[0.6] lg:scale-90 origin-right">
+                         {pokerPlayers.filter(p => p.isBot).slice(2, 4).map((bot, idx) => (
+                           <div key={idx} className="flex flex-col gap-2 items-end">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-white/60">{bot.name}</span>
+                                <div className="w-8 h-8 rounded-full bg-purple-400/20 border border-purple-400/40 flex items-center justify-center text-[10px] font-black text-purple-400">
+                                  {bot.name[0]}
+                                </div>
+                              </div>
+                              <div className="flex -space-x-8">
+                                {bot.cards.map((c, ci) => (
+                                  <PlayingCard key={ci} card={c} index={ci} faceUp={gameState === 'showdown' || gameState === 'payout'} small={true} />
+                                ))}
+                              </div>
+                           </div>
+                         ))}
+                      </div>
+
                       {/* Dealer Area */}
                       <div className="flex flex-col items-center gap-4 lg:gap-6">
                         <div className="flex -space-x-10 lg:-space-x-12 perspective-1000 scale-[0.7] sm:scale-100 lg:scale-110">
@@ -679,7 +822,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                               <PlayingCard 
                                 key={i} 
                                 card={c} 
-                                faceUp={(gameState === 'showdown' || gameState === 'payout') || (gameState === 'decision' && i === 3)} 
+                                faceUp={gameState === 'showdown' || gameState === 'payout'} 
                                 index={i}
                                 isDealerCard={true}
                                 onMount={audio.cardFlick}
@@ -693,11 +836,6 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                               {[...Array(5)].map((_, j) => <div key={j} className="w-20 h-28 lg:w-32 lg:h-44 bg-white/5 rounded-2xl border border-white/20" />)}
                             </div>
                           )}
-                        </div>
-                        <div className="bg-white/5 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
-                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50">
-                             Dealer qualifies with King high
-                          </span>
                         </div>
                       </div>
 
