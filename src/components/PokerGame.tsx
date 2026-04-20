@@ -166,6 +166,7 @@ interface PokerPlayerState {
     result?: string;
     payout?: number;
     handResult?: HandResult;
+    sessionProfit: number;
 }
 
 interface PokerGameProps {
@@ -418,7 +419,8 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                 ante: 0,
                 play: 0,
                 acesUp: 0,
-                folded: false
+                folded: false,
+                sessionProfit: 0
             }));
 
             const botsNeeded = 4 - currentPokerPlayers.length;
@@ -431,7 +433,8 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     ante: 0,
                     play: 0,
                     acesUp: 0,
-                    folded: false
+                    folded: false,
+                    sessionProfit: 0
                 });
             }
             return currentPokerPlayers;
@@ -613,6 +616,9 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                 const anteBonus = getAnteBonusPayout(pBest.rank);
                 if (anteBonus > 0) winnings += p.ante * anteBonus;
 
+                const roundCost = p.ante + (p.play || 0) + p.acesUp;
+                const roundProfit = winnings - roundCost;
+
                 if (!p.isBot) {
                     setPlayers(prev => prev.map(player => player.id === p.id ? { ...player, balance: player.balance + winnings } : player));
                     if (winnings > 0) {
@@ -631,7 +637,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     }
                 }
 
-                return { ...p, payout: winnings, result: resultText, handResult: pBest };
+                return { ...p, payout: winnings, result: resultText, handResult: pBest, sessionProfit: p.sessionProfit + roundProfit };
             });
 
             setPokerPlayers(results);
@@ -658,58 +664,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
 
     return (
         <div className="flex-1 flex flex-col bg-[#0b0b14] h-screen overflow-hidden text-slate-100 font-sans selection:bg-cyan-400 selection:text-black">
-            {/* Header */}
-            <header className="h-14 lg:h-16 shrink-0 border-b border-white/5 flex items-center justify-between px-4 lg:px-12 bg-slate-950/50 backdrop-blur-md z-50">
-                <div className="flex items-center gap-4 lg:gap-12">
-                  <motion.h1 
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="text-base lg:text-xl font-black italic tracking-tighter text-on-surface uppercase flex items-center gap-2 group cursor-pointer" 
-                    onClick={onExit}
-                  >
-                    <Gamepad2 size={18} className="text-yellow-500 group-hover:rotate-12 transition-transform" />
-                    <span className="hidden xs:inline">NOCTURNE <span className="text-secondary italic">POKER</span></span>
-                    <span className="xs:hidden">N.P</span>
-                  </motion.h1>
-                  
-                  <nav className="hidden lg:flex items-center gap-8 text-[10px] font-black uppercase tracking-[0.2em] text-on-surface/40">
-                    <button className="hover:text-cyan-400 transition-colors">Live Tables</button>
-                    <button className="hover:text-cyan-400 transition-colors">Private Club</button>
-                    <button className="hover:text-cyan-400 transition-colors">Tournaments</button>
-                  </nav>
-                </div>
-
-                <div className="flex items-center gap-3 lg:gap-6">
-                  <div className="flex flex-col items-end">
-                    <span className="text-[7px] lg:text-[8px] text-white/30 uppercase font-bold tracking-widest">Bankroll</span>
-                    <motion.span 
-                      key={activePlayer.balance}
-                      initial={{ scale: 1.2, color: '#facc15' }}
-                      animate={{ scale: 1, color: '#facc15' }}
-                      className="text-sm lg:text-lg font-black text-secondary drop-shadow-[0_0_8px_rgba(250,204,21,0.3)]"
-                    >
-                      {formatCurrency(activePlayer.balance)}
-                    </motion.span>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 lg:gap-4 text-white/40">
-                    <button className="hover:text-white transition-colors"><Star size={16} className="lg:w-[18px]" /></button>
-                    <button className="hover:text-white transition-colors hidden sm:block"><HelpCircle size={16} className="lg:w-[18px]" /></button>
-                    <button className="hover:text-white transition-colors"><Settings size={16} className="lg:w-[18px]" /></button>
-                  </div>
-                </div>
-            </header>
-
             <div className="flex-1 flex overflow-hidden">
-                {/* Left Rails */}
-                <aside className="w-16 shrink-0 border-r border-white/5 flex flex-col items-center py-8 gap-8 hidden lg:flex bg-slate-950/20">
-                  <button className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-secondary shadow-lg"><LayoutGrid size={20} /></button>
-                  <button className="w-10 h-10 rounded-lg hover:bg-white/5 flex items-center justify-center text-white/30 transition-all"><Star size={20} /></button>
-                  <button className="w-10 h-10 rounded-lg hover:bg-white/5 flex items-center justify-center text-white/30 transition-all"><Award size={20} /></button>
-                  <button className="w-10 h-10 rounded-lg hover:bg-white/5 flex items-center justify-center text-white/30 transition-all"><History size={20} /></button>
-                  <button className="mt-auto w-10 h-10 rounded-lg hover:bg-white/5 flex items-center justify-center text-white/30 transition-all"><Settings size={20} /></button>
-                </aside>
-
                 {/* Main Table Area */}
                 <main className="flex-1 relative flex flex-col min-w-0 bg-[#0d0912]">
                     {/* Felt Texture & Vignette */}
@@ -720,10 +675,10 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                       <div className="absolute inset-0 bg-gradient-to-t from-[#0d0912] via-transparent to-[#0d0912] opacity-80" />
                     </div>
 
-                    <div className="relative z-10 flex-1 flex flex-col items-center justify-around py-6 lg:py-24">
+                    <div className="relative z-10 flex-1 flex flex-col items-center justify-between py-2 lg:py-6 overflow-hidden">
                       
-                      {/* Opponents Area */}
-                      <div className="absolute top-[20%] left-4 lg:left-12 flex flex-col gap-12 scale-[0.6] lg:scale-90 origin-left">
+                      {/* Opponents Area - Absolute positioned for minimal impact on layout flow */}
+                      <div className="absolute top-[10%] left-4 lg:left-8 flex flex-col gap-6 scale-[0.4] sm:scale-[0.5] lg:scale-[0.65] origin-left opacity-30 pointer-events-none">
                          {pokerPlayers.filter(p => p.isBot).slice(0, 2).map((bot, idx) => (
                            <div key={idx} className="flex flex-col gap-2">
                               <div className="flex items-center gap-2">
@@ -741,7 +696,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                          ))}
                       </div>
 
-                      <div className="absolute top-[20%] right-4 lg:right-12 flex flex-col gap-12 scale-[0.6] lg:scale-90 origin-right">
+                      <div className="absolute top-[10%] right-4 lg:right-8 flex flex-col gap-6 scale-[0.4] sm:scale-[0.5] lg:scale-[0.65] origin-right opacity-30 pointer-events-none">
                          {pokerPlayers.filter(p => p.isBot).slice(2, 4).map((bot, idx) => (
                            <div key={idx} className="flex flex-col gap-2 items-end">
                               <div className="flex items-center gap-2">
@@ -759,9 +714,9 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                          ))}
                       </div>
 
-                      {/* Dealer Area */}
-                      <div className="flex flex-col items-center gap-4 lg:gap-6">
-                        <div className="flex -space-x-10 lg:-space-x-12 perspective-1000 scale-[0.7] sm:scale-100 lg:scale-110">
+                      {/* Dealer Area - Compacted */}
+                      <div className="flex flex-col items-center gap-2 lg:gap-4 shrink-0">
+                        <div className="flex -space-x-12 lg:-space-x-16 perspective-1000 scale-[0.6] sm:scale-[0.8] lg:scale-100">
                           {dealerCards.length > 0 ? (
                             dealerCards.map((c, i) => (
                               <PlayingCard 
@@ -782,58 +737,65 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                             </div>
                           )}
                         </div>
-                        <div className="bg-white/5 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
-                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50">
-                             Dealer qualifies with King high
-                          </span>
-                        </div>
                       </div>
 
-                      {/* Active Betting Zones & Human Player */}
-                      <div className="flex flex-col items-center w-full gap-4 lg:gap-24 overflow-y-auto no-scrollbar py-4 lg:py-0">
-                        <div className="flex items-center gap-4 sm:gap-12 lg:gap-20 relative scale-[0.8] sm:scale-100">
+                      {/* Active Betting Zones & Human Player - Distributed vertically */}
+                      <div className="flex flex-col items-center w-full grow justify-center gap-4 lg:gap-12">
+                        <div className="grid grid-cols-3 gap-6 lg:gap-12 items-end scale-[0.7] sm:scale-[0.85] lg:scale-100">
                           
                           {/* Aces Up Box */}
                           <div 
                             onClick={() => handleBet('acesUp')}
-                            className="relative flex flex-col items-center w-[85px] h-[100px] lg:w-[130px] lg:h-[150px] rounded-[24px] lg:rounded-[32px] border-2 border-dashed border-cyan-500/40 justify-center group cursor-pointer transition-all hover:border-cyan-500/70"
+                            className="relative flex flex-col items-center w-[75px] h-[90px] lg:w-[110px] lg:h-[130px] rounded-2xl border-2 border-dashed border-cyan-500/40 justify-center group cursor-pointer transition-all hover:border-cyan-500/70 hover:bg-cyan-500/5"
                           >
-                            <div className="absolute -top-3.5 bg-[#161320] px-2 font-black text-[8px] lg:text-[10px] uppercase tracking-widest text-cyan-400 group-hover:text-cyan-300 transition-colors">Aces Up</div>
+                            <div className="absolute -top-3 bg-[#110f1a] px-2 font-black text-[6px] lg:text-[8px] uppercase tracking-widest text-cyan-400 group-hover:text-cyan-300">Aces Up</div>
                             {mainHuman?.acesUp ? (
-                              <motion.span initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="text-yellow-500 font-bold text-xl lg:text-3xl drop-shadow-md">${mainHuman.acesUp}</motion.span>
-                            ) : null}
+                              <motion.div initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="flex flex-col items-center">
+                                 <div className="w-8 h-8 lg:w-12 lg:h-12 rounded-full bg-cyan-500 text-black flex items-center justify-center font-black text-[10px] lg:text-sm shadow-[0_0_20px_rgba(6,182,212,0.3)]">
+                                    {mainHuman.acesUp}
+                                 </div>
+                              </motion.div>
+                            ) : (
+                               <Star size={18} className="text-cyan-500/10 group-hover:text-cyan-500/30 transition-colors" />
+                            )}
                           </div>
 
                           {/* Ante Box */}
                           <div 
                             onClick={() => handleBet('ante')}
-                            className="relative flex flex-col items-center w-[100px] h-[120px] lg:w-[160px] lg:h-[180px] rounded-[24px] lg:rounded-[32px] border-[3px] border-yellow-500/80 justify-center group cursor-pointer transition-all hover:border-yellow-400 shadow-[0_0_50px_rgba(234,179,8,0.05)]"
+                            className="relative flex flex-col items-center w-[90px] h-[110px] lg:w-[130px] lg:h-[150px] rounded-3xl border-[3px] border-yellow-500/80 justify-center group cursor-pointer transition-all hover:border-yellow-400 shadow-[0_0_50px_rgba(234,179,8,0.05)] bg-yellow-500/5 hover:bg-yellow-500/10"
                           >
-                            <div className="absolute -top-3.5 bg-[#161320] px-2 font-black text-[9px] lg:text-[11px] uppercase tracking-widest text-yellow-500 group-hover:text-yellow-400 transition-colors">Ante</div>
+                            <div className="absolute -top-3.5 bg-[#110f1a] px-2 font-black text-[7px] lg:text-[9px] uppercase tracking-widest text-yellow-500">Main Ante</div>
                             {mainHuman?.ante ? (
-                              <motion.div initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="bg-yellow-500 text-black rounded-full w-[45px] h-[45px] lg:w-[60px] lg:h-[60px] flex items-center justify-center font-black text-sm lg:text-xl shadow-[0_4px_15px_rgba(234,179,8,0.4)]">
-                                {mainHuman.ante >= 1000 ? `$${mainHuman.ante / 1000}k` : `$${mainHuman.ante}`}
+                              <motion.div initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="bg-yellow-500 text-black rounded-full w-[45px] h-[45px] lg:w-[60px] lg:h-[60px] flex items-center justify-center font-black text-sm lg:text-xl shadow-[0_4px_25px_rgba(234,179,8,0.4)]">
+                                {mainHuman.ante >= 1000 ? `$${(mainHuman.ante / 1000).toFixed(0)}k` : `$${mainHuman.ante}`}
                               </motion.div>
-                            ) : null}
+                            ) : (
+                               <Trophy size={28} className="text-yellow-500/10 group-hover:text-yellow-500/30 transition-colors" />
+                            )}
                           </div>
 
                           {/* Play Box */}
                           <div className={cn(
-                            "relative flex flex-col items-center w-[85px] h-[100px] lg:w-[130px] lg:h-[150px] rounded-[24px] lg:rounded-[32px] border-2 border-dashed justify-center transition-all",
-                            mainHuman?.play ? "border-transparent" : "border-white/20"
+                            "relative flex flex-col items-center w-[75px] h-[90px] lg:w-[110px] lg:h-[130px] rounded-2xl border-2 border-dashed justify-center transition-all",
+                            mainHuman?.play ? "border-white/50 bg-white/5" : "border-white/10"
                           )}>
-                            <div className="absolute -top-3.5 bg-[#161320] px-2 font-black text-[8px] lg:text-[10px] uppercase tracking-widest text-white/50">Play</div>
+                            <div className="absolute -top-3 bg-[#110f1a] px-2 font-black text-[6px] lg:text-[8px] uppercase tracking-widest text-white/30">Play</div>
                             {mainHuman?.play ? (
-                              <motion.span initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="text-white font-bold text-xl lg:text-3xl drop-shadow-md">${mainHuman.play}</motion.span>
+                              <motion.div initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="flex flex-col items-center">
+                                 <div className="w-8 h-8 lg:w-12 lg:h-12 rounded-full bg-white text-black flex items-center justify-center font-black text-[10px] lg:text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)]">
+                                    {mainHuman.play}
+                                 </div>
+                              </motion.div>
                             ) : (
-                              <div className="w-10 h-10 lg:w-14 lg:h-14 rounded-xl lg:rounded-2xl bg-white/5 flex items-center justify-center text-white/20 font-light text-2xl lg:text-4xl">+</div>
+                              <div className="w-6 h-6 rounded-lg bg-white/5 flex items-center justify-center text-white/10 font-bold text-base">+</div>
                             )}
                           </div>
                         </div>
 
-                        {/* Player Hand Area */}
-                        <div className="flex flex-col items-center gap-4 sm:gap-8 relative my-2 lg:mt-8">
-                          <div className="flex -space-x-12 sm:-space-x-4 lg:-space-x-8 perspective-1000 scale-[0.7] sm:scale-100 lg:scale-110">
+                        {/* Player Hand Area - Compacted */}
+                        <div className="flex flex-col items-center gap-4 relative shrink-0">
+                          <div className="flex -space-x-12 sm:-space-x-14 lg:-space-x-16 perspective-1000 scale-[0.6] sm:scale-[0.85] lg:scale-100">
                             {mainHuman?.cards.length ? (
                               mainHuman.cards.map((c, i) => (
                                 <div key={i} className="relative">
@@ -883,20 +845,49 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     </div>
 
                     {/* Bottom Action Footer */}
-                    <footer className="h-20 lg:h-[100px] bg-[#121016] border-t border-white/5 flex items-center justify-between px-4 lg:px-12 z-50 relative shadow-[0_-10px_40px_rgba(0,0,0,0.5)]">
-                        <div className="flex flex-col scale-[0.85] lg:scale-100 origin-left">
-                          <span className="text-[8px] lg:text-[9px] text-white/40 uppercase font-black tracking-[0.25em] leading-none mb-1">Total Action</span>
-                          <motion.span 
-                            key={totalAction}
-                            initial={{ scale: 1.1, opacity: 0.8 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            className="text-xl lg:text-3xl font-bold text-white tracking-tight"
-                          >
-                            {formatCurrency(totalAction)}
-                          </motion.span>
+                    <footer className="h-28 lg:h-32 bg-[#121016]/98 backdrop-blur-2xl border-t border-white/10 flex items-center justify-between px-6 lg:px-12 z-50 relative shadow-[0_-20px_50px_rgba(0,0,0,0.8)]">
+                        <div className="flex items-center gap-6 shrink-0 h-full">
+                           <button 
+                             onClick={onExit} 
+                             className="w-12 h-12 rounded-2xl bg-white/5 hover:bg-red-500/20 hover:text-red-400 flex items-center justify-center transition-all group border border-white/5 hover:border-red-500/30"
+                           >
+                              <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
+                           </button>
+
+                           <div className="flex flex-col h-14 w-px bg-white/10 mx-2 hidden lg:block" />
+
+                           <div className="flex flex-col justify-center">
+                              <span className="text-[10px] text-white/30 uppercase font-black tracking-widest leading-none mb-1.5">Bankroll</span>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-xs font-black text-secondary/60">$</span>
+                                <motion.span 
+                                  key={activePlayer.balance}
+                                  initial={{ y: 10, opacity: 0 }}
+                                  animate={{ y: 0, opacity: 1 }}
+                                  className="text-2xl lg:text-3xl font-black text-secondary tracking-tighter"
+                                >
+                                  {activePlayer.balance.toLocaleString()}
+                                </motion.span>
+                              </div>
+                           </div>
+
+                           <div className="flex flex-col justify-center">
+                             <span className="text-[10px] text-white/30 uppercase font-black tracking-widest leading-none mb-1.5">Table Bet</span>
+                             <div className="flex items-baseline gap-1">
+                               <span className="text-xs font-black text-white/40">$</span>
+                               <motion.span 
+                                 key={totalAction}
+                                 initial={{ y: 10, opacity: 0 }}
+                                 animate={{ y: 0, opacity: 1 }}
+                                 className="text-2xl lg:text-3xl font-black text-white tracking-tighter"
+                               >
+                                 {totalAction.toLocaleString()}
+                               </motion.span>
+                             </div>
+                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 lg:gap-4 absolute left-1/2 -translate-x-1/2 scale-[0.75] xs:scale-[0.85] sm:scale-100">
+                        <div className="flex items-center gap-3 lg:gap-4 absolute left-1/2 -translate-x-1/2 scale-[0.8] sm:scale-100 z-10 transition-transform">
                           <AnimatePresence mode="wait">
                             {gameState === 'betting' ? (
                               <motion.div 

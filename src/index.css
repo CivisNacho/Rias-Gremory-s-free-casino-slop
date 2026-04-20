@@ -49,6 +49,20 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes lightning {
+  0% { transform: translateX(-100%); opacity: 0; }
+  50% { opacity: 0.5; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+@keyframes lightning-bolt {
+  0%, 95%, 100% { opacity: 0; }
+  96% { opacity: 1; }
+  97% { opacity: 0.2; }
+  98% { opacity: 0.8; }
+  99% { opacity: 0; }
+}
+
 .animate-spin-slow {
   animation: spin-slow 8s linear infinite;
 }

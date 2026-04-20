@@ -21,10 +21,11 @@ import {
   BarChart3,
   Download
 } from 'lucide-react';
-import { motion, AnimatePresence, useAnimation } from 'motion/react';
+import { motion, AnimatePresence, useAnimation, useSpring, useTransform } from 'motion/react';
 import { cn, formatCurrency } from '../lib/utils';
 import confetti from 'canvas-confetti';
 import { RoulettePlayer } from '../lib/rouletteUtils';
+import { SlotEngine } from '../lib/slotEngine';
 
 // --- Constants ---
 
@@ -124,103 +125,160 @@ const useSlotsAudio = () => {
     return useMemo(() => ({ init, playTick, playThud, playWinChime }), [init, playTick, playThud, playWinChime]);
 };
 
-// --- 3D Reel Component ---
-const Reel3D = ({ isSpinning, symbols, activeCombos, winningRows }: { isSpinning: boolean, symbols: any[], activeCombos: any[], winningRows: number[] }) => {
-    const controls = useAnimation();
-    const [faces, setFaces] = useState<any[]>(() => {
-        const arr = Array(10).fill(null).map(()=> SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)]);
-        if (symbols && symbols.length === 3) {
-            arr[9] = symbols[0];
-            arr[0] = symbols[1];
-            arr[1] = symbols[2];
-        }
-        return arr;
-    });
+// --- PixiJS Reel Engine Component ---
+const PixiReels = ({ 
+    reelStatus, 
+    symbolsData, 
+    onStopSequenceComplete, 
+    onReelStop, 
+    outcomeGrid,
+    winningCoordinates
+}: { 
+    reelStatus: string, 
+    symbolsData: any[], 
+    onStopSequenceComplete: () => void, 
+    onReelStop: () => void, 
+    outcomeGrid: any[][],
+    winningCoordinates: Set<string>
+}) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const engineRef = useRef<SlotEngine | null>(null);
+    
+    // Store latest callbacks in refs to avoid stale closures in the Pixi engine
+    const stopCallbackRef = useRef(onStopSequenceComplete);
+    const reelStopCallbackRef = useRef(onReelStop);
+    
+    useEffect(() => {
+        stopCallbackRef.current = onStopSequenceComplete;
+        reelStopCallbackRef.current = onReelStop;
+    }, [onStopSequenceComplete, onReelStop]);
 
     useEffect(() => {
-        if (isSpinning) {
-            controls.set({ filter: 'blur(3px)', opacity: 0.9, scale: 0.95 });
-            controls.start({
-                rotateX: [0, -360],
-                transition: { repeat: Infinity, duration: 0.12, ease: 'linear' }
+        if (!containerRef.current) return;
+        const width = 800;
+        const height = 360;
+
+        const mappedSymbols = symbolsData.map(s => ({
+            id: s.id,
+            color: s.color || '#fff'
+        }));
+
+        let isDestroyed = false;
+        const engine = new SlotEngine(containerRef.current, {
+            width,
+            height,
+            cols: 5,
+            rows: 3,
+            symbols: mappedSymbols,
+            onStop: () => stopCallbackRef.current(),
+            onReelStop: (idx) => reelStopCallbackRef.current()
+        });
+        
+        engineRef.current = engine;
+
+        engine.init().then(() => {
+            if (isDestroyed) {
+                engine.destroy();
+                return;
+            }
+            if (engine.app && engine.app.canvas) {
+                const canvas = engine.app.canvas;
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                canvas.style.objectFit = 'contain';
+            }
+        });
+
+        return () => {
+            isDestroyed = true;
+            if (engine.isInitialized) {
+                 setTimeout(() => {
+                     engine.destroy();
+                 }, 0);
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!engineRef.current) return;
+        if (reelStatus === 'spinning') {
+            engineRef.current.spin();
+        } else if (reelStatus === 'stopping' && outcomeGrid && outcomeGrid.length > 0) {
+            engineRef.current.stop(outcomeGrid);
+        } else if (reelStatus === 'stopped' && winningCoordinates.size > 0) {
+            const coords = Array.from(winningCoordinates).map(s => {
+                const [r, c] = s.split(',').map(Number);
+                return { row: r, col: c };
             });
-        } else {
-            setFaces(prev => {
-                const next = [...prev];
-                if (symbols && symbols.length === 3) {
-                    next[9] = symbols[0]; // Top
-                    next[0] = symbols[1]; // Mid
-                    next[1] = symbols[2]; // Bot
-                }
-                return next;
-            });
-            
-            // Critical: Remove blur immediately on stop for clarity
-            controls.set({ filter: 'blur(0px)', opacity: 1, scale: 1 });
-            controls.start({
-                rotateX: [-36, 0], // Instantly lock, travel only 1 face for a "hard stop"
-                transition: { 
-                    type: 'spring', 
-                    damping: 14, 
-                    stiffness: 300, 
-                    mass: 0.6,
-                    restDelta: 0.001
-                }
-            });
+            engineRef.current.highlightWinningSymbols(coords);
         }
-    }, [isSpinning, symbols, controls]);
+    }, [reelStatus, outcomeGrid, winningCoordinates]);
 
     return (
-        <div className="h-full w-full relative flex items-center justify-center pointer-events-none" style={{ perspective: '1000px' }}>
-            <motion.div
-                animate={controls}
-                style={{ transformStyle: 'preserve-3d' }}
-                className="absolute w-full h-[80px]"
-            >
-                {faces.map((sym, i) => {
-                    // Row 0 is Top (face 9), Row 1 is Mid (face 0), Row 2 is Bot (face 1) based on rotation [-36, 0] ending on 0
-                    const isWinningFace = activeCombos.length > 0 && ((i === 9 && winningRows.includes(0)) || (i === 0 && winningRows.includes(1)) || (i === 1 && winningRows.includes(2)));
-
-                    return (
-                        <div
-                            key={i}
-                            className="absolute left-0 right-0 h-[80px] flex items-center justify-center transition-all duration-700"
-                            style={{ 
-                                transform: `rotateX(${i * 36}deg) translateZ(${isWinningFace ? 150 : 123}px)`, 
-                                backfaceVisibility: 'hidden',
-                                WebkitBackfaceVisibility: 'hidden',
-                                zIndex: isWinningFace ? 40 : 10
-                            }}
-                        >
-                            <div className={cn(
-                                "w-[68px] h-[68px] lg:w-[76px] lg:h-[76px] rounded-full flex items-center justify-center relative transition-all duration-500",
-                                isWinningFace 
-                                    ? "bg-gradient-to-br from-yellow-300 via-red-500 to-red-900 border-2 border-[#facc15] shadow-[0_0_50px_rgba(250,204,21,0.8),inset_0_0_30px_rgba(255,255,255,0.4)] scale-110" 
-                                    : "bg-[#0a0a0a] border-2 border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.05),0_10px_20px_rgba(0,0,0,0.8)]"
-                            )}>
-                                {/* Glowing Ring Indicator */}
-                                {isWinningFace && (
-                                    <div className="absolute inset-[-6px] rounded-full border-4 border-white/80 animate-ping opacity-70 pointer-events-none" />
-                                )}
-                                
-                                <sym.icon 
-                                    className={cn(
-                                        "relative z-10 transition-all duration-500 w-8 h-8 lg:w-10 lg:h-10",
-                                        isSpinning && "opacity-80 scale-110 drop-shadow-[0_0_20px_rgba(255,255,255,0.6)]",
-                                        isWinningFace ? "scale-125 drop-shadow-[0_0_25px_rgba(255,255,255,1)] animate-pulse text-white" : "drop-shadow-[0_4px_10px_rgba(0,0,0,0.8)]"
-                                    )} 
-                                    style={{ color: isWinningFace ? '#fff' : sym.color }} 
-                                />
-                            </div>
-                        </div>
-                    );
-                })}
-            </motion.div>
+        <div className="w-full h-full flex items-center justify-center pointer-events-none relative">
+             <div className="absolute inset-0 bg-blue-500/5 blur-[100px] pointer-events-none" />
+             <div ref={containerRef} className="rounded-2xl overflow-hidden relative z-10" />
         </div>
-    )
+    );
+};
+
+const FloatingCoins = ({ triggerId }: { triggerId: number }) => {
+    const [coins, setCoins] = useState<{ id: number, x: number, delay: number }[]>([]);
+
+    useEffect(() => {
+        if (triggerId === 0) return;
+        const newCoins = Array.from({ length: 20 }).map((_, i) => ({
+            id: triggerId + i * 0.01,
+            x: (Math.random() - 0.5) * 400, // Spread horizontally from center
+            delay: Math.random() * 0.5
+        }));
+        setCoins(newCoins);
+    }, [triggerId]);
+
+    return (
+        <div className="absolute inset-0 pointer-events-none z-50 flex items-center justify-center overflow-hidden">
+            <AnimatePresence>
+                {coins.map(c => (
+                    <motion.div
+                        key={c.id}
+                        initial={{ opacity: 0, y: 0, x: c.x, scale: 0.5 }}
+                        animate={{ opacity: [0, 1, 1, 0], y: -500, x: c.x + (Math.random() - 0.5) * 100, scale: 1.5, rotate: 360 * 3 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 1.5 + Math.random(), delay: c.delay, ease: "easeOut" }}
+                        className="absolute text-4xl drop-shadow-lg"
+                        onAnimationComplete={() => setCoins(prev => prev.filter(p => p.id !== c.id))}
+                    >
+                        💰
+                    </motion.div>
+                ))}
+            </AnimatePresence>
+        </div>
+    );
 };
 
 // --- Sub-Components ---
+
+const AnimatedBalance = ({ value }: { value: number }) => {
+    const spring = useSpring(value, { mass: 0.8, stiffness: 75, damping: 15 });
+    const display = useTransform(spring, (current) => formatCurrency(Math.round(current)));
+    const controls = useAnimation();
+    const prevValueRef = useRef(value);
+
+    useEffect(() => {
+        spring.set(value);
+        if (value > prevValueRef.current) {
+            controls.start({
+                color: ['#34d399', '#facc15', '#facc15'], 
+                scale: [1, 1.2, 1],
+                textShadow: ['0px 0px 10px rgba(52,211,153,0.8)', '0px 0px 20px rgba(250,204,21,0.5)', '0px 0px 0px rgba(0,0,0,0)'],
+                transition: { duration: 0.8 }
+            });
+        }
+        prevValueRef.current = value;
+    }, [spring, value, controls]);
+    
+    return <motion.span animate={controls} className="inline-block">{display}</motion.span>;
+};
 
 const PlayerCard = ({ 
     player, 
@@ -294,7 +352,9 @@ const PlayerCard = ({
 
         <div>
            <p className="text-[10px] text-white/30 uppercase font-black mb-1">Balance</p>
-           <p className="text-xl font-lobster font-black text-secondary">{formatCurrency(player.balance)}</p>
+           <p className="text-xl font-lobster font-black text-secondary">
+               <AnimatedBalance value={player.balance} />
+           </p>
         </div>
         
         <div className="flex justify-between items-end gap-2">
@@ -334,7 +394,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
     const [isAllInMode, setIsAllInMode] = useState(false);
     const isMaxBet = isAllInMode || selectedBet >= 1000;
     const [progressiveJackpot, setProgressiveJackpot] = useState(4289150);
-    const [reelStatus, setReelStatus] = useState<'idle' | 'spinning' | 'stopped'>('idle');
+    const [reelStatus, setReelStatus] = useState<'idle' | 'spinning' | 'stopping' | 'stopped'>('idle');
     const [luckLevel, setLuckLevel] = useState<'normal' | 'lucky' | 'luckiest'>('normal');
     const [luckDuration, setLuckDuration] = useState(0);
     const [grid, setGrid] = useState<any[][]>([]);
@@ -351,6 +411,7 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
     const [comboCues, setComboCues] = useState<{ id: string, name: string, count: number, multiplier: number, color: string }[]>([]);
     const [winningCoordinates, setWinningCoordinates] = useState<Set<string>>(new Set());
     const [charmEffect, setCharmEffect] = useState<{ active: boolean, playerName: string, charmLabel: string } | null>(null);
+    const [coinTrigger, setCoinTrigger] = useState(0);
     
     const audio = useSlotsAudio();
     const spinIntervalRef = useRef<any>(null);
@@ -600,24 +661,19 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         stopTimeoutsRef.current = [];
 
         const mainPusher = setTimeout(() => {
-            [0, 1, 2, 3, 4].forEach(colIndex => {
-                const subTimer = setTimeout(() => {
-                    setSpinningReels(prev => {
-                        const next = [...prev];
-                        next[colIndex] = false;
-                        return next;
-                    });
-                    audio.playThud();
-                    
-                    if (colIndex === 4) {
-                        clearInterval(spinIntervalRef.current);
-                        setReelStatus('stopped');
-                        calculateWin(newGrid, currentBetAmount, earnedFreeSpins, finalLuck);
-                    }
-                }, colIndex * 650); // Increased delay to 650ms for a very distinct one-by-one feel
-                stopTimeoutsRef.current.push(subTimer);
-            });
-        }, 1200); // 1.2s spin duration before stopping sequence begins
+            // Let the PixiJS engine handle the stagger instead of React state timeouts
+            setReelStatus('stopping');
+            
+            // Stop the spinning tick sound when stopping starts
+            if (spinIntervalRef.current) {
+                clearInterval(spinIntervalRef.current);
+                spinIntervalRef.current = null;
+            }
+            
+            // To ensure calculateWin executes with the exact correct parameters 
+            // after the Pixi animation is entirely complete, we'll assign it to a transient ref.
+            (window as any).__lastSpinParams = { newGrid, currentBetAmount, earnedFreeSpins, finalLuck };
+        }, 1200); // 1.2s minimum spin duration
         stopTimeoutsRef.current.push(mainPusher);
 
     }, [reelStatus, players, selectedBet, luckLevel, luckDuration, playerCharms, audio, freeSpinsRemaining, isAllInMode, isAutoSpinning, activePlayer.id]);
@@ -657,13 +713,12 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         let charmPlayerName = "";
         let charmLabel = "";
 
-        // Determine payout scale roughly targeting 80% overall RTP 
-        // We'll scale payouts down on normal, and scale up heavily on luckiest
-        let rtpScale = 0.6; // Normal gives fewer rewards to offset the 80% global pool
-        if (currentLuck === 'lucky') rtpScale = 1.2;
-        if (currentLuck === 'luckiest') rtpScale = 2.5; // Max out rewards when luckiest
+        // Determine payout scale: Increased for realness (aiming for ~95% RTP in aggregate)
+        let rtpScale = 1.0; // Base win is now much more respectable
+        if (currentLuck === 'lucky') rtpScale = 1.5;
+        if (currentLuck === 'luckiest') rtpScale = 3.0; 
 
-        // Check for Free Spin (Bonus) Symbols scattered
+        // Scatter Bonus check
         let bonusCount = 0;
         for(let r=0; r<GRID_ROWS; r++) {
             for(let c=0; c<GRID_COLS; c++) {
@@ -679,78 +734,86 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
         }
 
         uniqueInCol1.forEach(symId => {
-            let count = 1;
-            for (let i = 1; i < GRID_COLS; i++) {
-                if (newGrid.some(row => row[i].id === symId)) {
-                    count++;
+            let reelOccurrences = [0, 0, 0, 0, 0];
+            
+            // Count occurrences for each reel
+            for (let c = 0; c < GRID_COLS; c++) {
+                const countOnReel = newGrid.filter(row => row[c].id === symId).length;
+                if (countOnReel > 0) {
+                    reelOccurrences[c] = countOnReel;
                 } else {
-                    break;
+                    break; // Stop at the first reel without the symbol
                 }
             }
 
-            if (count >= 3) {
+            // Find how many consecutive reels have the symbol
+            const consecutiveReels = reelOccurrences.filter(count => count > 0).length;
+
+            if (consecutiveReels >= 3) {
                 const sym = SYMBOLS.find(s => s.id === symId)!;
-                const multiplier = count - 2;
-                baseWinAmount += sym.value * multiplier * (betAmount / 50);
-                newComboCues.push({ id: sym.id, name: sym.name, count, multiplier, color: sym.color });
+                // Calculate ways: count1 * count2 * count3...
+                let totalWays = 1;
+                for (let i = 0; i < consecutiveReels; i++) {
+                    totalWays *= reelOccurrences[i];
+                }
+
+                // Industry standard: Value * Multiplier * Ways * (Bet / StandardDivider)
+                const winMultiplier = consecutiveReels === 3 ? 1 : (consecutiveReels === 4 ? 3 : 15);
+                const waysWin = sym.value * winMultiplier * totalWays * (betAmount / 200);
                 
-                // Track exact coordinates that triggered this win
-                for (let c = 0; c < count; c++) {
+                baseWinAmount += waysWin;
+
+                newComboCues.push({ 
+                    id: sym.id, 
+                    name: sym.name, 
+                    count: consecutiveReels, 
+                    multiplier: winMultiplier * totalWays, 
+                    color: sym.color 
+                });
+                
+                for (let c = 0; c < consecutiveReels; c++) {
                     for (let r = 0; r < GRID_ROWS; r++) {
-                        if (newGrid[r][c].id === sym.id) {
-                            newWinningCoords.add(`${r},${c}`);
-                        }
+                        if (newGrid[r][c].id === sym.id) newWinningCoords.add(`${r},${c}`);
                     }
                 }
 
-                // Check for Charm Wins
+                // Identify if any player charm matches
                 players.forEach((p: any) => {
                     const playerCharmId = playerCharms[p.id];
-                    if (playerCharmId) {
-                        const charmObj = BONUS_OBJECTS.find(o => o.id === playerCharmId);
-                        // Simplified mapping: IDs matching or label-based match
-                        if (playerCharmId === symId || (playerCharmId === 'fire' && symId === 'flame')) {
-                            triggeredCharm = true;
-                            charmPlayerName = p.name;
-                            charmLabel = charmObj?.label || "Power";
-                        }
+                    if (playerCharmId === symId || (playerCharmId === 'fire' && symId === 'flame')) {
+                        triggeredCharm = true;
+                        charmPlayerName = p.name;
+                        charmLabel = BONUS_OBJECTS.find(o => o.id === playerCharmId)?.label || "Power";
                     }
                 });
             }
         });
 
-        // Calculate for ALL players simultaneously
         const newPlayerWins: Record<string, number> = {};
         let totalGroupWin = 0;
         let jackpotWon = false;
 
-        // Check for Grand Jackpot: 5 Medals
         const medalWin = newComboCues.find(c => c.id === 'medal' && c.count === 5);
-        if (medalWin && isMaxBet) {
-            jackpotWon = true;
-        }
+        if (medalWin && isMaxBet) jackpotWon = true;
 
         players.forEach((player: any) => {
             let individualWin = baseWinAmount;
             
-            // Grand Jackpot Award for the player who triggered it (activePlayer)
             if (jackpotWon && player.id === activePlayer.id) {
                 individualWin += progressiveJackpot;
             } else {
-                // Apply RTP scaling to regular wins (not progressive jackpot which is its own economy)
                 individualWin = Math.floor(individualWin * rtpScale);
             }
 
-            // Apply unique Charm multiplier
-            const charm = playerCharms[player.id];
-            if (charm) {
-                // Determine if this specific win involved the player's charm
-                const isCharmWin = newComboCues.some(cue => 
-                    cue.id === charm || (charm === 'fire' && cue.id === 'flame')
-                );
-
-                const multiplier = isCharmWin ? 2.5 : (0.8 + (Math.random() * 0.4)); 
-                individualWin = Math.floor(individualWin * multiplier);
+            // Power up win for the specific player who has the matching charm
+            const pCharm = playerCharms[player.id];
+            const isCharmRel = newComboCues.some(cue => cue.id === pCharm || (pCharm === 'fire' && cue.id === 'flame'));
+            
+            if (isCharmRel) {
+                individualWin = Math.floor(individualWin * 2.5);
+            } else if (pCharm) {
+                // Background passive luck from having *any* charm
+                individualWin = Math.floor(individualWin * (0.9 + Math.random() * 0.4));
             }
 
             if (individualWin > 0) {
@@ -765,13 +828,8 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
             setPlayerWins(newPlayerWins);
             
             if (jackpotWon) {
-                setProgressiveJackpot(10000); // Reset to base 10k
-                confetti({
-                    particleCount: 500,
-                    spread: 160,
-                    origin: { y: 0.6 },
-                    colors: ['#facc15', '#ffffff', '#ffd700']
-                });
+                setProgressiveJackpot(10000);
+                confetti({ particleCount: 500, spread: 160, origin: { y: 0.6 }, colors: ['#facc15', '#ffffff', '#ffd700'] });
             }
 
             if (triggeredCharm) {
@@ -779,13 +837,15 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                 setTimeout(() => setCharmEffect(null), 3000);
             }
 
-            setPlayers((prev: any) => prev.map((p: any) => ({
-                ...p,
-                balance: p.balance + (newPlayerWins[p.id] || 0)
-            })));
+            // --- CRITICAL BALANCE FIX: Ensure players get paid ---
+            setPlayers((prev: any[]) => prev.map((p: any) => {
+                const winAmt = newPlayerWins[p.id] || 0;
+                return { ...p, balance: p.balance + winAmt };
+            }));
             
             audio.playWinChime();
             triggerConfetti();
+            setCoinTrigger(Date.now());
         }
 
         setComboCues(newComboCues);
@@ -899,13 +959,19 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                     </div>
 
                     {/* --- Center Column: Slot Grid --- */}
-                    <div className="col-span-12 lg:col-span-8 flex flex-col gap-8 order-first lg:order-none">
+                    <div className="col-span-12 lg:col-span-8 flex flex-col gap-8 order-first lg:order-none relative">
+                        {/* Lightning Decor */}
+                        <div className="absolute -top-20 inset-x-0 h-40 pointer-events-none overflow-hidden z-0">
+                            <div className="absolute inset-0 bg-blue-500/10 blur-[120px] animate-pulse" />
+                            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-400/50 to-transparent animate-[lightning_2s_infinite]" />
+                        </div>
+
                         {/* The Game Grid Container */}
                         <div className={cn(
-                            "flex-1 bg-gradient-to-b rounded-[48px] p-6 lg:p-12 border-4 transition-all duration-700 relative overflow-hidden",
+                            "flex-1 bg-gradient-to-b rounded-[48px] p-6 lg:p-12 border-4 transition-all duration-700 relative overflow-hidden backdrop-blur-xl",
                             isMaxBet 
-                                ? "from-[#450a0a] to-black border-red-500 shadow-[0_0_100px_rgba(255,0,0,0.3)]" 
-                                : "from-[#2a0505] to-[#000000] border-red-900/40 shadow-[0_0_50px_rgba(255,0,0,0.1)]"
+                                ? "from-[#450a0a]/90 to-black/95 border-red-500 shadow-[0_0_100px_rgba(255,0,0,0.3)]" 
+                                : "from-[#2a0505]/90 to-[#000000]/95 border-red-900/40 shadow-[0_0_50px_rgba(255,0,0,0.1)]"
                         )}>
                             {/* Inferno Animated Overlay for Max Bet */}
                             <AnimatePresence>
@@ -918,6 +984,21 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                                     >
                                         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(255,0,0,0.2),transparent_70%)] animate-pulse" />
                                         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-red-600/10 to-transparent" />
+                                        {/* Electric Arc Visuals */}
+                                        <div className="absolute inset-0 opacity-20 pointer-events-none overflow-hidden">
+                                            {[...Array(3)].map((_, i) => (
+                                                <div 
+                                                    key={i}
+                                                    className="absolute h-px bg-white/40 w-full blur-[1px]"
+                                                    style={{ 
+                                                        top: `${30 + i * 20}%`, 
+                                                        left: '-10%', 
+                                                        transform: `rotate(${(Math.random() - 0.5) * 10}deg)`,
+                                                        animation: `lightning-bolt ${2 + Math.random()}s infinite`
+                                                    }}
+                                                />
+                                            ))}
+                                        </div>
                                     </motion.div>
                                 )}
                             </AnimatePresence>
@@ -979,23 +1060,27 @@ export function SlotsGame({ players, activePlayerId, setPlayers, setActivePlayer
                                     )}
                                 </AnimatePresence>
 
-                                <div className="relative z-10 grid grid-cols-5 gap-2 lg:gap-6 w-full h-full p-2 md:p-4 lg:p-6 items-center min-w-[500px] md:min-w-0">
-                                    {[0, 1, 2, 3, 4].map(cIdx => {
-                                         const wRows = [];
-                                         if (winningCoordinates.has(`0,${cIdx}`)) wRows.push(0);
-                                         if (winningCoordinates.has(`1,${cIdx}`)) wRows.push(1);
-                                         if (winningCoordinates.has(`2,${cIdx}`)) wRows.push(2);
+                                <FloatingCoins triggerId={coinTrigger} />
 
-                                         return (
-                                            <Reel3D
-                                                key={cIdx}
-                                                isSpinning={spinningReels[cIdx]}
-                                                symbols={grid[0] ? [ grid[0][cIdx], grid[1][cIdx], grid[2][cIdx] ] : []}
-                                                activeCombos={reelStatus === 'stopped' ? comboCues : []}
-                                                winningRows={reelStatus === 'stopped' ? wRows : []}
-                                            />
-                                         );
-                                    })}
+                                <div className="relative z-10 flex items-center justify-center w-full h-full p-2 md:p-4 lg:p-6">
+                                    <PixiReels 
+                                        reelStatus={reelStatus}
+                                        symbolsData={SYMBOLS} 
+                                        outcomeGrid={grid}
+                                        winningCoordinates={winningCoordinates}
+                                        onReelStop={() => audio.playThud()}
+                                        onStopSequenceComplete={() => {
+                                            clearInterval(spinIntervalRef.current);
+                                            setReelStatus('stopped');
+                                            
+                                            // Extract transient params safely
+                                            const params = (window as any).__lastSpinParams;
+                                            if (params) {
+                                                calculateWin(params.newGrid, params.currentBetAmount, params.earnedFreeSpins, params.finalLuck);
+                                                (window as any).__lastSpinParams = null;
+                                            }
+                                        }}
+                                    />
                                 </div>
                             </div>
 

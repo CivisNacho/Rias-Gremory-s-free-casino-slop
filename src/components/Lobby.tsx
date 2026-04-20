@@ -31,7 +31,7 @@ const games: Game[] = [
     id: 'poker',
     title: '4 CARD POKER',
     description: 'Master the elite 4-card strategy in a high-stakes duel.',
-    image: 'https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/poker_icon.jpg',
+    image: 'https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/refs/heads/main/images/akane_poker_icon.jpg',
     minBet: 100,
     maxBet: 50000,
     type: 'table',

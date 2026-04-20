@@ -695,6 +695,7 @@ interface RouletteGameProps {
 export function RouletteGame({
     players, activePlayerId, setPlayers, setActivePlayerId, onAddPlayer, onExit
 }: RouletteGameProps) {
+  const activePlayer = players.find(p => p.id === activePlayerId) || players[0];
   const [selectedChip, setSelectedChip] = useState(50);
   const [isSpinning, setIsSpinning] = useState(false);
   const [result, setResult] = useState<number | null>(null);
@@ -1012,6 +1013,17 @@ export function RouletteGame({
                       {c}
                     </button>
                   ))}
+                  <button 
+                    onClick={() => setSelectedChip(activePlayer.balance)} 
+                    className={cn(
+                      "w-12 h-12 lg:w-14 lg:h-14 rounded-full flex items-center justify-center font-headline font-black transition-all text-xs lg:text-base border-2", 
+                      selectedChip === activePlayer.balance 
+                        ? "bg-red-600 text-white border-red-500 shadow-[0_0_20px_rgba(255,0,0,0.5)] scale-110" 
+                        : "bg-white/5 text-white/30 border-white/10 hover:bg-white/10"
+                    )}
+                  >
+                    MAX
+                  </button>
                 </div>
 
                 {/* Main Action Buttons */}
