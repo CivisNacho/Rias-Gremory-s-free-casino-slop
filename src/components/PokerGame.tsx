@@ -34,9 +34,11 @@ import {
   compareHands, 
   getAcesUpPayout, 
   getAnteBonusPayout,
-  dealerQualifies
+  dealerQualifies,
+  PokerPlayerState
 } from '../lib/pokerUtils';
 import { RoulettePlayer } from '../lib/rouletteUtils';
+import { PokerBoard } from './PokerBoard';
 
 // --- Constants ---
 const CHIPS = [50, 100, 500];
@@ -154,22 +156,9 @@ const usePokerAudio = () => {
     return { cardFlick, cardReveal, cardThud, chipPlace, winSound, foldSound, init };
 };
 
-interface PokerPlayerState {
-    id: string;
-    name: string;
-    isBot: boolean;
-    cards: Card[];
-    ante: number;
-    play: number;
-    acesUp: number;
-    folded: boolean;
-    result?: string;
-    payout?: number;
-    handResult?: HandResult;
-    sessionProfit: number;
-}
 
-interface PokerGameProps {
+
+export interface PokerGameProps {
     players: RoulettePlayer[];
     activePlayerId: string;
     setPlayers: React.Dispatch<React.SetStateAction<RoulettePlayer[]>>;
@@ -177,209 +166,6 @@ interface PokerGameProps {
     onAddPlayer: () => void;
     onExit: () => void;
 }
-
-const SUIT_SYMBOL = {
-    hearts: '♥',
-    diamonds: '♦',
-    clubs: '♣',
-    spades: '♠'
-};
-
-const CARD_SUIT_COLOR = {
-    hearts: 'text-red-500',
-    diamonds: 'text-red-400',
-    clubs: 'text-slate-900',
-    spades: 'text-slate-900'
-};
-
-// --- Sub-components ---
-
-const cardWrapperVariants: import('framer-motion').Variants = {
-  initial: ({ isPlayerCard, isDealerCard, index }) => ({
-    y: isPlayerCard ? -600 : (isDealerCard ? -50 : 80),
-    x: isDealerCard ? 300 : (isPlayerCard ? (index - 2) * 50 : 0),
-    opacity: 0,
-    rotateZ: isDealerCard ? -45 : 0,
-    scale: 0.5,
-    zIndex: 0
-  }),
-  animate: ({ faceUp, winning, index, small }) => ({
-    y: faceUp ? Math.abs(index - (small ? 2.5 : 2)) * 8 : Math.abs(index - (small ? 2.5 : 2)) * 4 + 5,
-    x: 0,
-    opacity: 1,
-    scale: winning ? 1.05 : 1,
-    rotateZ: faceUp ? (index - (small ? 2.5 : 2)) * (small ? -2 : 6) : (index - (small ? 2.5 : 2)) * 2,
-    zIndex: faceUp ? 10 : 0
-  }),
-  hover: ({ index, small }) => ({
-    y: -10,
-    rotateZ: (index - (small ? 2.5 : 2)) * (small ? 0 : 3),
-    scale: 1.02,
-    zIndex: 30
-  }),
-  tap: {
-    scale: 0.98,
-    y: 0
-  }
-};
-
-const cardFlipVariants: import('framer-motion').Variants = {
-  initial: { rotateY: 180 },
-  animate: ({ faceUp }) => ({
-    rotateY: faceUp ? 0 : 180
-  })
-};
-
-const PlayingCard = ({ 
-  card, 
-  faceUp = true, 
-  index = 0, 
-  winning = false,
-  royalPick = false,
-  small = false,
-  isPlayerCard = false,
-  isDealerCard = false,
-  onMount,
-  onReveal,
-  onThud
-}: { 
-  card?: Card, 
-  faceUp?: boolean, 
-  index?: number, 
-  winning?: boolean,
-  royalPick?: boolean,
-  small?: boolean,
-  isPlayerCard?: boolean,
-  isDealerCard?: boolean,
-  onMount?: () => void,
-  onReveal?: () => void,
-  onThud?: () => void
-}) => {
-    const prevFaceUp = useRef(faceUp);
-    const hasThudded = useRef(false);
-
-    useEffect(() => {
-        if (onMount) onMount();
-    }, [onMount]);
-
-    useEffect(() => {
-        if (!prevFaceUp.current && faceUp && onReveal) {
-            setTimeout(onReveal, index * 40); 
-            hasThudded.current = false;
-        }
-        prevFaceUp.current = faceUp;
-    }, [faceUp, onReveal, index]);
-
-    return (
-        <motion.div
-            custom={{ isPlayerCard, isDealerCard, index, faceUp, winning, small }}
-            variants={cardWrapperVariants}
-            initial="initial"
-            animate="animate"
-            whileHover="hover"
-            whileTap="tap"
-            onAnimationStart={(definition) => {
-                if (typeof definition === 'string' && definition === 'animate' && isPlayerCard && onReveal) {
-                    setTimeout(onReveal, (index * 200) + 400);
-                }
-            }}
-            onAnimationComplete={(definition) => {
-                if (definition === 'animate') {
-                    if (onThud && !hasThudded.current) {
-                       onThud();
-                       hasThudded.current = true;
-                    }
-                }
-            }}
-            transition={{
-                type: 'tween',
-                ease: 'easeOut',
-                duration: 0.55,
-                delay: isPlayerCard ? index * 0.15 : index * 0.08
-            }}
-            className={cn(
-                "relative transition-shadow duration-300 transform-gpu group cursor-pointer",
-                small ? "w-10 h-14 lg:w-14 lg:h-20" : "w-20 h-28 lg:w-32 lg:h-44",
-                winning ? "ring-4 ring-cyan-400 ring-offset-4 ring-offset-slate-950 z-20 rounded-xl" : "",
-                royalPick ? "ring-2 ring-cyan-400 scale-105 z-20 shadow-[0_0_30px_rgba(34,211,238,0.4)] rounded-xl" : ""
-            )}
-            style={{ 
-              willChange: 'transform, opacity',
-              perspective: '1200px'
-            }}
-        >
-            <motion.div
-              custom={{ faceUp }}
-              variants={cardFlipVariants}
-              initial="initial"
-              animate="animate"
-              transition={{
-                  type: 'tween',
-                  ease: 'easeInOut',
-                  duration: 0.5,
-                  delay: isPlayerCard ? (index * 0.15) + 0.4 : index * 0.08
-              }}
-              className="w-full h-full rounded-xl shadow-2xl relative"
-              style={{
-                transformStyle: 'preserve-3d'
-              }}
-            >
-                {/* Front */}
-                <div className={cn(
-                    "absolute inset-0 bg-white rounded-xl flex flex-col justify-between p-1 lg:p-2 shadow-inner",
-                    card ? CARD_SUIT_COLOR[card.suit] : 'text-slate-900'
-                )}
-                style={{ 
-                  transform: 'translateZ(1px)', 
-                  backfaceVisibility: 'hidden', 
-                  WebkitBackfaceVisibility: 'hidden'
-                }}>
-                    <div className="flex flex-col items-start leading-[0.8] p-0.5">
-                        <span className={cn("font-black tracking-tighter", small ? "text-[10px]" : "text-sm lg:text-2xl")}>{card?.rank}</span>
-                        <span className={cn(small ? "text-[8px]" : "text-[10px] lg:text-sm")}>{card && SUIT_SYMBOL[card.suit]}</span>
-                    </div>
-                    
-                    {royalPick && !small && (
-                      <div className="absolute top-1 right-1 bg-cyan-400 text-[6px] lg:text-[8px] font-black text-black px-1 py-0.5 rounded-sm uppercase tracking-tighter shadow-sm">
-                        Royal
-                      </div>
-                    )}
-
-                    <div className={cn("flex justify-center grow items-center select-none leading-none", small ? "text-sm" : "text-2xl lg:text-5xl")}>
-                       {card && SUIT_SYMBOL[card.suit]}
-                    </div>
-
-                    <div className="flex flex-col items-start leading-[0.8] rotate-180 p-0.5">
-                        <span className={cn("font-black tracking-tighter", small ? "text-[10px]" : "text-sm lg:text-2xl")}>{card?.rank}</span>
-                        <span className={cn(small ? "text-[8px]" : "text-[10px] lg:text-sm")}>{card && SUIT_SYMBOL[card.suit]}</span>
-                    </div>
-                </div>
-                {/* Back */}
-                <div 
-                    className="absolute inset-0 bg-[#1a1625] rounded-xl overflow-hidden border border-white/20 shadow-inner"
-                    style={{ 
-                      transform: 'rotateY(180deg) translateZ(1px)', 
-                      backfaceVisibility: 'hidden', 
-                      WebkitBackfaceVisibility: 'hidden'
-                    }}
-                >
-                    <img 
-                        src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/issei_poker_back.jpg" 
-                        onError={(e) => { e.currentTarget.src = "https://picsum.photos/seed/issei/400/600" }}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                        alt="Card Back"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#121016] via-transparent to-transparent opacity-80" />
-                    <div className={cn("absolute inset-0 flex items-center justify-center text-white/40 font-lobster rotate-45 select-none tracking-widest", small ? "text-[8px]" : "text-xs lg:text-xl")}>
-                        NOCTURNE
-                    </div>
-                    <div className="absolute inset-2 border border-white/20 rounded-lg pointer-events-none" />
-                </div>
-            </motion.div>
-        </motion.div>
-    );
-};
 
 export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: PokerGameProps) => {
     const [gameState, setGameState] = useState<'betting' | 'dealing' | 'decision' | 'showdown' | 'payout'>('betting');
@@ -663,8 +449,8 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
     };
 
     return (
-        <div className="flex-1 flex flex-col bg-[#0b0b14] h-screen overflow-hidden text-slate-100 font-sans selection:bg-cyan-400 selection:text-black">
-            <div className="flex-1 flex overflow-hidden">
+        <div className="fixed inset-0 flex flex-col bg-[#0b0b14] overflow-hidden text-slate-100 font-sans selection:bg-cyan-400 selection:text-black">
+            <div className="flex-1 flex overflow-hidden min-h-0">
                 {/* Main Table Area */}
                 <main className="flex-1 relative flex flex-col min-w-0 bg-[#0d0912]">
                     {/* Felt Texture & Vignette */}
@@ -675,181 +461,22 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                       <div className="absolute inset-0 bg-gradient-to-t from-[#0d0912] via-transparent to-[#0d0912] opacity-80" />
                     </div>
 
-                    <div className="relative z-10 flex-1 flex flex-col items-center justify-between py-2 lg:py-6 overflow-hidden">
-                      
-                      {/* Opponents Area - Absolute positioned for minimal impact on layout flow */}
-                      <div className="absolute top-[10%] left-4 lg:left-8 flex flex-col gap-6 scale-[0.4] sm:scale-[0.5] lg:scale-[0.65] origin-left opacity-30 pointer-events-none">
-                         {pokerPlayers.filter(p => p.isBot).slice(0, 2).map((bot, idx) => (
-                           <div key={idx} className="flex flex-col gap-2">
-                              <div className="flex items-center gap-2">
-                                <div className="w-8 h-8 rounded-full bg-cyan-400/20 border border-cyan-400/40 flex items-center justify-center text-[10px] font-black text-cyan-400">
-                                  {bot.name[0]}
-                                </div>
-                                <span className="text-[10px] font-black uppercase tracking-widest text-white/60">{bot.name}</span>
-                              </div>
-                              <div className="flex -space-x-8">
-                                {bot.cards.map((c, ci) => (
-                                  <PlayingCard key={ci} card={c} index={ci} faceUp={gameState === 'showdown' || gameState === 'payout'} small={true} />
-                                ))}
-                              </div>
-                           </div>
-                         ))}
-                      </div>
-
-                      <div className="absolute top-[10%] right-4 lg:right-8 flex flex-col gap-6 scale-[0.4] sm:scale-[0.5] lg:scale-[0.65] origin-right opacity-30 pointer-events-none">
-                         {pokerPlayers.filter(p => p.isBot).slice(2, 4).map((bot, idx) => (
-                           <div key={idx} className="flex flex-col gap-2 items-end">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-white/60">{bot.name}</span>
-                                <div className="w-8 h-8 rounded-full bg-purple-400/20 border border-purple-400/40 flex items-center justify-center text-[10px] font-black text-purple-400">
-                                  {bot.name[0]}
-                                </div>
-                              </div>
-                              <div className="flex -space-x-8">
-                                {bot.cards.map((c, ci) => (
-                                  <PlayingCard key={ci} card={c} index={ci} faceUp={gameState === 'showdown' || gameState === 'payout'} small={true} />
-                                ))}
-                              </div>
-                           </div>
-                         ))}
-                      </div>
-
-                      {/* Dealer Area - Compacted */}
-                      <div className="flex flex-col items-center gap-2 lg:gap-4 shrink-0">
-                        <div className="flex -space-x-12 lg:-space-x-16 perspective-1000 scale-[0.6] sm:scale-[0.8] lg:scale-100">
-                          {dealerCards.length > 0 ? (
-                            dealerCards.map((c, i) => (
-                              <PlayingCard 
-                                key={i} 
-                                card={c} 
-                                faceUp={gameState === 'showdown' || gameState === 'payout'} 
-                                index={i}
-                                isDealerCard={true}
-                                onMount={audio.cardFlick}
-                                onReveal={audio.cardReveal}
-                                onThud={audio.cardThud}
-                                winning={gameState === 'showdown' && getBest4CardHand(dealerCards).cards.some(bc => bc.rank === c.rank && bc.suit === c.suit)}
-                              />
-                            ))
-                          ) : (
-                            <div className="flex -space-x-8 lg:-space-x-12 opacity-10">
-                              {[...Array(5)].map((_, j) => <div key={j} className="w-20 h-28 lg:w-32 lg:h-44 bg-white/5 rounded-2xl border border-white/20" />)}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Active Betting Zones & Human Player - Distributed vertically */}
-                      <div className="flex flex-col items-center w-full grow justify-center gap-4 lg:gap-12">
-                        <div className="grid grid-cols-3 gap-6 lg:gap-12 items-end scale-[0.7] sm:scale-[0.85] lg:scale-100">
-                          
-                          {/* Aces Up Box */}
-                          <div 
-                            onClick={() => handleBet('acesUp')}
-                            className="relative flex flex-col items-center w-[75px] h-[90px] lg:w-[110px] lg:h-[130px] rounded-2xl border-2 border-dashed border-cyan-500/40 justify-center group cursor-pointer transition-all hover:border-cyan-500/70 hover:bg-cyan-500/5"
-                          >
-                            <div className="absolute -top-3 bg-[#110f1a] px-2 font-black text-[6px] lg:text-[8px] uppercase tracking-widest text-cyan-400 group-hover:text-cyan-300">Aces Up</div>
-                            {mainHuman?.acesUp ? (
-                              <motion.div initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="flex flex-col items-center">
-                                 <div className="w-8 h-8 lg:w-12 lg:h-12 rounded-full bg-cyan-500 text-black flex items-center justify-center font-black text-[10px] lg:text-sm shadow-[0_0_20px_rgba(6,182,212,0.3)]">
-                                    {mainHuman.acesUp}
-                                 </div>
-                              </motion.div>
-                            ) : (
-                               <Star size={18} className="text-cyan-500/10 group-hover:text-cyan-500/30 transition-colors" />
-                            )}
-                          </div>
-
-                          {/* Ante Box */}
-                          <div 
-                            onClick={() => handleBet('ante')}
-                            className="relative flex flex-col items-center w-[90px] h-[110px] lg:w-[130px] lg:h-[150px] rounded-3xl border-[3px] border-yellow-500/80 justify-center group cursor-pointer transition-all hover:border-yellow-400 shadow-[0_0_50px_rgba(234,179,8,0.05)] bg-yellow-500/5 hover:bg-yellow-500/10"
-                          >
-                            <div className="absolute -top-3.5 bg-[#110f1a] px-2 font-black text-[7px] lg:text-[9px] uppercase tracking-widest text-yellow-500">Main Ante</div>
-                            {mainHuman?.ante ? (
-                              <motion.div initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="bg-yellow-500 text-black rounded-full w-[45px] h-[45px] lg:w-[60px] lg:h-[60px] flex items-center justify-center font-black text-sm lg:text-xl shadow-[0_4px_25px_rgba(234,179,8,0.4)]">
-                                {mainHuman.ante >= 1000 ? `$${(mainHuman.ante / 1000).toFixed(0)}k` : `$${mainHuman.ante}`}
-                              </motion.div>
-                            ) : (
-                               <Trophy size={28} className="text-yellow-500/10 group-hover:text-yellow-500/30 transition-colors" />
-                            )}
-                          </div>
-
-                          {/* Play Box */}
-                          <div className={cn(
-                            "relative flex flex-col items-center w-[75px] h-[90px] lg:w-[110px] lg:h-[130px] rounded-2xl border-2 border-dashed justify-center transition-all",
-                            mainHuman?.play ? "border-white/50 bg-white/5" : "border-white/10"
-                          )}>
-                            <div className="absolute -top-3 bg-[#110f1a] px-2 font-black text-[6px] lg:text-[8px] uppercase tracking-widest text-white/30">Play</div>
-                            {mainHuman?.play ? (
-                              <motion.div initial={{ scale: 1.5 }} animate={{ scale: 1 }} className="flex flex-col items-center">
-                                 <div className="w-8 h-8 lg:w-12 lg:h-12 rounded-full bg-white text-black flex items-center justify-center font-black text-[10px] lg:text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)]">
-                                    {mainHuman.play}
-                                 </div>
-                              </motion.div>
-                            ) : (
-                              <div className="w-6 h-6 rounded-lg bg-white/5 flex items-center justify-center text-white/10 font-bold text-base">+</div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Player Hand Area - Compacted */}
-                        <div className="flex flex-col items-center gap-4 relative shrink-0">
-                          <div className="flex -space-x-12 sm:-space-x-14 lg:-space-x-16 perspective-1000 scale-[0.6] sm:scale-[0.85] lg:scale-100">
-                            {mainHuman?.cards.length ? (
-                              mainHuman.cards.map((c, i) => (
-                                <div key={i} className="relative">
-                                    <PlayingCard 
-                                      card={c} 
-                                      index={i}
-                                      faceUp={true} // Player cards are always dealt face up, animating a flip during travel
-                                      isPlayerCard={true}
-                                      onMount={audio.cardFlick}
-                                      onReveal={audio.cardReveal}
-                                      onThud={audio.cardThud}
-                                      winning={mainHuman.handResult?.cards.some(bc => bc.rank === c.rank && bc.suit === c.suit) && (gameState === 'showdown' || gameState === 'payout')}
-                                      royalPick={mainHuman.handResult && mainHuman.handResult.rank >= HandRank.Flush && i === 3}
-                                    />
-                                    {mainHuman.handResult && mainHuman.handResult.rank >= HandRank.Flush && i === 3 && (gameState === 'showdown' || gameState === 'payout') && (
-                                        <div className="absolute -top-4 -right-10 z-50 bg-cyan-400 text-black px-2.5 py-1 rounded-sm text-[9px] font-black uppercase tracking-[0.15em] rotate-12 shadow-[0_4px_15px_rgba(34,211,238,0.4)] border border-cyan-300">
-                                            Royal Pick
-                                        </div>
-                                    )}
-                                </div>
-                              ))
-                            ) : (
-                              <div className="flex -space-x-4 lg:-space-x-8 opacity-5">
-                                {[...Array(5)].map((_, i) => <div key={i} className="w-20 h-28 lg:w-32 lg:h-44 bg-white/5 rounded-xl border border-white/20" />)}
-                              </div>
-                            )}
-                          </div>
-                          
-                          <AnimatePresence>
-                            {(gameState === 'decision' || gameState === 'showdown' || gameState === 'payout') && mainHuman?.cards.length && (
-                              <motion.div 
-                                initial={{ y: 20, opacity: 0 }}
-                                animate={{ y: 0, opacity: 1 }}
-                                className="flex items-center gap-4 mt-4"
-                              >
-                                 <span className="text-[10px] font-black uppercase text-white/40 tracking-wider">Your Hand:</span>
-                                 <div className="px-4 py-1 lg:px-6 lg:py-2 rounded-xl bg-[#2e2618] border border-[#52442b] shadow-xl">
-                                     <span className="text-[11px] lg:text-sm font-black uppercase tracking-[0.1em] text-yellow-500">
-                                       {mainHuman.handResult ? mainHuman.handResult.description : getBest4CardHand(mainHuman.cards).description}
-                                     </span>
-                                 </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      </div>
-                    </div>
+                    <PokerBoard
+                        pokerPlayers={pokerPlayers}
+                        mainHuman={mainHuman}
+                        dealerCards={dealerCards}
+                        gameState={gameState}
+                        audio={audio}
+                        handleBet={handleBet}
+                        getLiveInsight={getLiveInsight}
+                    />
 
                     {/* Bottom Action Footer */}
-                    <footer className="h-28 lg:h-32 bg-[#121016]/98 backdrop-blur-2xl border-t border-white/10 flex items-center justify-between px-6 lg:px-12 z-50 relative shadow-[0_-20px_50px_rgba(0,0,0,0.8)]">
-                        <div className="flex items-center gap-6 shrink-0 h-full">
+                    <footer className="bg-[#121016]/98 backdrop-blur-2xl border-t border-white/10 flex flex-wrap lg:flex-nowrap items-center justify-between px-3 lg:px-12 z-50 relative shrink-0 shadow-[0_-20px_50px_rgba(0,0,0,0.8)] lg:h-32 py-2 lg:py-0">
+                        <div className="flex items-center gap-2 lg:gap-6 shrink-0">
                            <button 
                              onClick={onExit} 
-                             className="w-12 h-12 rounded-2xl bg-white/5 hover:bg-red-500/20 hover:text-red-400 flex items-center justify-center transition-all group border border-white/5 hover:border-red-500/30"
+                             className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl lg:rounded-2xl bg-white/5 hover:bg-red-500/20 hover:text-red-400 flex items-center justify-center transition-all group border border-white/5 hover:border-red-500/30"
                            >
                               <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
                            </button>
@@ -864,14 +491,14 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                                   key={activePlayer.balance}
                                   initial={{ y: 10, opacity: 0 }}
                                   animate={{ y: 0, opacity: 1 }}
-                                  className="text-2xl lg:text-3xl font-black text-secondary tracking-tighter"
+                                  className="text-lg lg:text-3xl font-black text-secondary tracking-tighter"
                                 >
                                   {activePlayer.balance.toLocaleString()}
                                 </motion.span>
                               </div>
                            </div>
 
-                           <div className="flex flex-col justify-center">
+                           <div className="hidden lg:flex flex-col justify-center">
                              <span className="text-[10px] text-white/30 uppercase font-black tracking-widest leading-none mb-1.5">Table Bet</span>
                              <div className="flex items-baseline gap-1">
                                <span className="text-xs font-black text-white/40">$</span>
@@ -887,7 +514,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                            </div>
                         </div>
 
-                        <div className="flex items-center gap-3 lg:gap-4 absolute left-1/2 -translate-x-1/2 scale-[0.8] sm:scale-100 z-10 transition-transform">
+                        <div className="flex items-center justify-center gap-2 lg:gap-4 static lg:absolute left-auto lg:left-1/2 translate-x-0 lg:-translate-x-1/2 scale-[0.85] sm:scale-100 z-10 transition-transform w-full lg:w-auto order-first lg:order-none py-1 lg:py-0">
                           <AnimatePresence mode="wait">
                             {gameState === 'betting' ? (
                               <motion.div 
@@ -900,7 +527,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                                   whileHover={{ scale: 1.05 }}
                                   whileTap={{ scale: 0.95 }}
                                   onClick={startDeal}
-                                  className="h-12 lg:h-14 px-12 lg:px-16 bg-cyan-400 text-black rounded-lg font-black uppercase tracking-widest text-xs transition-all shadow-[0_0_20px_rgba(34,211,238,0.2)]"
+                                  className="h-11 lg:h-14 px-10 lg:px-16 bg-cyan-400 text-black rounded-lg font-black uppercase tracking-widest text-[11px] lg:text-xs transition-all shadow-[0_0_20px_rgba(34,211,238,0.2)]"
                                 >
                                   Deal Cards
                                 </motion.button>
@@ -914,9 +541,9 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                               >
                                 {mainHuman && !mainHuman.folded && mainHuman.play === 0 && (
                                   <>
-                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('fold')} className="px-8 lg:px-12 h-12 lg:h-14 bg-[#211d27] hover:bg-[#2b2533] text-white/70 rounded-lg font-black uppercase tracking-widest text-xs transition-colors">Fold</motion.button>
-                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('play1x')} className="px-8 lg:px-12 h-12 lg:h-14 bg-cyan-400 hover:bg-cyan-300 text-black rounded-lg font-black uppercase tracking-widest text-xs shadow-md transition-colors">Play (1x)</motion.button>
-                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('play3x')} className="px-8 lg:px-12 h-12 lg:h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-lg font-black uppercase tracking-widest text-xs shadow-md transition-colors">Play (3x)</motion.button>
+                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('fold')} className="px-4 lg:px-12 h-11 lg:h-14 bg-[#211d27] hover:bg-[#2b2533] text-white/70 rounded-lg font-black uppercase tracking-widest text-[10px] lg:text-xs transition-colors">Fold</motion.button>
+                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('play1x')} className="px-4 lg:px-12 h-11 lg:h-14 bg-cyan-400 hover:bg-cyan-300 text-black rounded-lg font-black uppercase tracking-widest text-[10px] lg:text-xs shadow-md transition-colors">Play (1x)</motion.button>
+                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('play3x')} className="px-4 lg:px-12 h-11 lg:h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-lg font-black uppercase tracking-widest text-[10px] lg:text-xs shadow-md transition-colors">Play (3x)</motion.button>
                                   </>
                                 )}
                               </motion.div>
@@ -927,7 +554,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                                  whileHover={{ scale: 1.05 }}
                                  whileTap={{ scale: 0.95 }}
                                  onClick={resetGame}
-                                 className="h-12 lg:h-14 px-16 bg-yellow-500 text-black rounded-lg font-black uppercase tracking-widest text-xs transition-colors shadow-lg"
+                                 className="h-11 lg:h-14 px-10 lg:px-16 bg-yellow-500 text-black rounded-lg font-black uppercase tracking-widest text-[11px] lg:text-xs transition-colors shadow-lg"
                                >
                                  Next Hand
                                </motion.button>
@@ -935,9 +562,9 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                           </AnimatePresence>
                         </div>
 
-                        <div className="flex items-center gap-3">
-                          <button onClick={clearBets} className="w-10 h-10 rounded-xl mr-2 text-white/30 hover:text-white/60 transition-colors flex items-center justify-center">
-                              <RotateCcw size={16} />
+                        <div className="flex items-center gap-1.5 lg:gap-3">
+                          <button onClick={clearBets} className="w-8 h-8 lg:w-10 lg:h-10 rounded-lg lg:rounded-xl mr-1 lg:mr-2 text-white/30 hover:text-white/60 transition-colors flex items-center justify-center">
+                              <RotateCcw size={14} />
                           </button>
                           {CHIPS.map(c => (
                             <motion.button 
@@ -946,12 +573,12 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                               whileTap={{ scale: 0.9 }}
                               onClick={() => setSelectedChip(c)}
                               className={cn(
-                                "w-12 h-12 lg:w-14 lg:h-14 rounded-2xl border flex items-center justify-center font-black transition-all transform",
+                                "w-9 h-9 lg:w-14 lg:h-14 rounded-xl lg:rounded-2xl border flex items-center justify-center font-black transition-all transform",
                                 CHIP_COLORS[c as keyof typeof CHIP_COLORS],
                                 selectedChip === c ? "scale-110 ring-2 ring-white/10 z-10" : "opacity-60"
                               )}
                             >
-                              <span className="text-xs font-bold drop-shadow-sm select-none">{c}</span>
+                              <span className="text-[10px] lg:text-xs font-bold drop-shadow-sm select-none">{c}</span>
                             </motion.button>
                           ))}
                         </div>
