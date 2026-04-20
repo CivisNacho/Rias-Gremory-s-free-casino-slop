@@ -166,7 +166,6 @@ interface PokerPlayerState {
     result?: string;
     payout?: number;
     handResult?: HandResult;
-    sessionProfit: number;
 }
 
 interface PokerGameProps {
@@ -419,8 +418,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                 ante: 0,
                 play: 0,
                 acesUp: 0,
-                folded: false,
-                sessionProfit: 0
+                folded: false
             }));
 
             const botsNeeded = 4 - currentPokerPlayers.length;
@@ -433,8 +431,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     ante: 0,
                     play: 0,
                     acesUp: 0,
-                    folded: false,
-                    sessionProfit: 0
+                    folded: false
                 });
             }
             return currentPokerPlayers;
@@ -616,9 +613,6 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                 const anteBonus = getAnteBonusPayout(pBest.rank);
                 if (anteBonus > 0) winnings += p.ante * anteBonus;
 
-                const roundCost = p.ante + (p.play || 0) + p.acesUp;
-                const roundProfit = winnings - roundCost;
-
                 if (!p.isBot) {
                     setPlayers(prev => prev.map(player => player.id === p.id ? { ...player, balance: player.balance + winnings } : player));
                     if (winnings > 0) {
@@ -637,7 +631,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     }
                 }
 
-                return { ...p, payout: winnings, result: resultText, handResult: pBest, sessionProfit: p.sessionProfit + roundProfit };
+                return { ...p, payout: winnings, result: resultText, handResult: pBest };
             });
 
             setPokerPlayers(results);
@@ -726,57 +720,8 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                       <div className="absolute inset-0 bg-gradient-to-t from-[#0d0912] via-transparent to-[#0d0912] opacity-80" />
                     </div>
 
-                    <div className="relative z-10 flex-1 flex flex-col items-center py-6 lg:py-12 gap-8 overflow-y-auto no-scrollbar">
+                    <div className="relative z-10 flex-1 flex flex-col items-center justify-around py-6 lg:py-24">
                       
-                      {/* Game Session Leaderboard - "The Top Banner" */}
-                      <div className="w-full max-w-5xl px-4 lg:px-0">
-                         <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-2xl p-4 lg:p-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)] flex flex-col lg:flex-row items-center justify-between gap-6 overflow-hidden relative group">
-                            <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 via-transparent to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                            
-                            <div className="flex items-center gap-4 lg:gap-8 shrink-0 relative z-10">
-                              <div className="w-12 h-12 lg:w-16 lg:h-16 rounded-2xl bg-gradient-to-br from-yellow-400 to-yellow-600 flex items-center justify-center shadow-lg shadow-yellow-500/20">
-                                <Trophy size={24} className="text-white lg:w-8 lg:h-8" />
-                              </div>
-                              <div>
-                                <h2 className="text-xl lg:text-3xl font-black italic tracking-tighter text-white uppercase leading-none">Session <span className="text-yellow-500">Standings</span></h2>
-                                <p className="text-[9px] lg:text-[10px] font-black uppercase tracking-[0.3em] text-white/30 mt-1">Live Game Tracking</p>
-                              </div>
-                            </div>
-
-                            <div className="flex flex-wrap justify-center items-center gap-2 lg:gap-6 flex-1 relative z-10">
-                                {[...pokerPlayers].sort((a, b) => b.sessionProfit - a.sessionProfit).map((p, i) => (
-                                    <div key={p.id} className={cn(
-                                        "flex items-center gap-3 px-4 py-2 rounded-xl transition-all border",
-                                        p.id === activePlayerId ? "bg-cyan-500/10 border-cyan-500/30 scale-105 shadow-lg shadow-cyan-500/5" : "bg-white/5 border-white/5 opacity-60 hover:opacity-100"
-                                    )}>
-                                        <div className={cn(
-                                            "w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-black",
-                                            i === 0 ? "bg-yellow-500 text-black" : "bg-white/10 text-white/40"
-                                        )}>
-                                            {i + 1}
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] font-black uppercase text-white/80 tracking-tight leading-tight">{p.name}</span>
-                                            <span className={cn(
-                                                "text-[9px] font-black font-mono",
-                                                p.sessionProfit >= 0 ? "text-green-400" : "text-red-400"
-                                            )}>
-                                                {p.sessionProfit >= 0 ? '+' : ''}${Math.abs(p.sessionProfit).toLocaleString()}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <div className="flex flex-col items-end gap-1 shrink-0 relative z-10 hidden sm:flex">
-                                <div className="px-3 py-1 bg-white/5 border border-white/10 rounded-lg">
-                                   <span className="text-[9px] font-black uppercase tracking-[0.2em] text-yellow-500/80">Dealer Qualifies: <span className="text-white">King High</span></span>
-                                </div>
-                                <div className="text-[8px] font-black uppercase tracking-widest text-white/20 mt-1">Hand #142 • Table A-12</div>
-                            </div>
-                         </div>
-                      </div>
-
                       {/* Opponents Area */}
                       <div className="absolute top-[20%] left-4 lg:left-12 flex flex-col gap-12 scale-[0.6] lg:scale-90 origin-left">
                          {pokerPlayers.filter(p => p.isBot).slice(0, 2).map((bot, idx) => (
@@ -836,6 +781,11 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                               {[...Array(5)].map((_, j) => <div key={j} className="w-20 h-28 lg:w-32 lg:h-44 bg-white/5 rounded-2xl border border-white/20" />)}
                             </div>
                           )}
+                        </div>
+                        <div className="bg-white/5 backdrop-blur-md px-6 py-2 rounded-full border border-white/10 shadow-[0_4px_20px_rgba(0,0,0,0.5)]">
+                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50">
+                             Dealer qualifies with King high
+                          </span>
                         </div>
                       </div>
 
