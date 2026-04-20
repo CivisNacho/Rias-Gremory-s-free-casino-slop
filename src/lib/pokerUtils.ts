@@ -183,3 +183,18 @@ export const getAnteBonusPayout = (rank: HandRank): number => {
   if (rank === HandRank.ThreeOfAKind) return 2;
   return 0;
 };
+
+export interface PokerPlayerState {
+    id: string;
+    name: string;
+    isBot: boolean;
+    cards: Card[];
+    ante: number;
+    play: number;
+    acesUp: number;
+    folded: boolean;
+    result?: string;
+    payout?: number;
+    handResult?: HandResult;
+    sessionProfit: number;
+}

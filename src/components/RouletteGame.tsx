@@ -3,7 +3,7 @@ import { Play, RotateCcw, Undo, CircleDot, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import confetti from 'canvas-confetti';
-import { BettingBoard } from './BettingBoard';
+import { BettingBoard } from './RouletteBettingBoard';
 import { BetType, RouletteBet, RoulettePlayer, calculatePayouts, PLAYER_COLORS } from '../lib/rouletteUtils';
 
 const WHEEL_NUMBERS = [
