@@ -8,7 +8,9 @@ import {
   Target,
   Trophy,
   Wallet,
-  Zap
+  Zap,
+  Info,
+  X
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import confetti from 'canvas-confetti';
@@ -122,6 +124,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
   const [events, setEvents] = useState<{ time: string; label: string; detail: string; tone?: 'good' | 'bad' | 'neutral' }[]>([]);
   const [history, setHistory] = useState<{ result: string; amount: number; time: string; tone: 'good' | 'bad' | 'neutral' }[]>([]);
   const [chipPulse, setChipPulse] = useState<ChipPulse | null>(null);
+  const [showAdviceModal, setShowAdviceModal] = useState(false);
 
   const activeProfile = useMemo(
     () => players.find((player) => player.id === activePlayerId) ?? players[0],
@@ -845,8 +848,8 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
           />
 
           <footer className="relative z-20 border-t border-white/10 bg-[#121016]/95 px-3 py-1.5 backdrop-blur-xl lg:px-5 lg:py-2">
-            <div className="flex flex-col gap-2 lg:grid lg:grid-cols-[auto_minmax(240px,320px)_auto] lg:items-center lg:gap-3">
-              <div className="flex shrink-0 flex-wrap items-center gap-2 lg:gap-3">
+            <div className="flex flex-col gap-2 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(240px,320px)_minmax(0,1fr)] lg:items-center lg:gap-3">
+              <div className="flex min-w-0 flex-nowrap items-center gap-2 lg:gap-3">
                 <button
                   onClick={onExit}
                   className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70 transition hover:border-red-400/35 hover:bg-red-500/10 hover:text-red-300"
@@ -863,7 +866,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -8 }}
                       transition={{ duration: 0.2 }}
-                      className="mt-0.5 text-lg font-black tracking-tight text-cyan-300 lg:text-xl"
+                      className="mt-0.5 tabular-nums text-lg font-black tracking-tight text-cyan-300 lg:text-xl"
                     >
                       ${activeProfile?.balance.toLocaleString() ?? '0'}
                     </motion.div>
@@ -901,6 +904,16 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                     </motion.div>
                   </AnimatePresence>
                 </div>
+
+                <div className="hidden min-w-0 pl-1 xl:block">
+                  <button
+                    onClick={() => setShowAdviceModal(true)}
+                    className="group flex h-9 w-9 items-center justify-center rounded-2xl border border-yellow-500/20 bg-yellow-500/10 text-yellow-500 transition hover:border-yellow-500/40 hover:bg-yellow-500/20"
+                    title="Get Advisor Tips"
+                  >
+                    <Info size={16} />
+                  </button>
+                </div>
               </div>
 
               <div className="mx-auto flex w-full min-w-[240px] max-w-[320px] items-center gap-2 rounded-3xl border border-white/10 bg-white/[0.04] px-3 py-2 lg:mx-2">
@@ -935,7 +948,7 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-wrap items-center gap-1.5 lg:justify-end">
+              <div className="flex min-w-0 flex-nowrap items-center gap-1.5 lg:justify-end">
                 {phase === 'idle' || phase === 'payout' ? (
                   <>
                     {phase === 'payout' && (
@@ -1151,6 +1164,58 @@ export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: Poker
           </div>
         </aside>
       </div>
+
+      <AnimatePresence>
+        {showAdviceModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAdviceModal(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md overflow-hidden rounded-[32px] border border-white/10 bg-[#1a1c24] p-8 shadow-2xl"
+            >
+              <button
+                onClick={() => setShowAdviceModal(false)}
+                className="absolute right-6 top-6 rounded-full border border-white/5 bg-white/5 p-2 text-white/40 transition hover:bg-white/10 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="mb-6 flex items-center gap-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-yellow-500/30 bg-yellow-500/10 text-yellow-400 shadow-[0_0_20px_rgba(234,179,8,0.1)]">
+                  <ShieldCheck size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black uppercase tracking-tight text-white italic">Elite Advisor</h3>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30">Strategic Live Insight</p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-6">
+                <p className="text-base font-medium leading-relaxed text-yellow-400/90 italic">
+                  &ldquo;{getLiveInsight()}&rdquo;
+                </p>
+              </div>
+
+              <div className="mt-8 flex justify-end">
+                <button
+                  onClick={() => setShowAdviceModal(false)}
+                  className="rounded-2xl bg-yellow-500 px-8 py-3 text-sm font-black uppercase tracking-widest text-black transition hover:bg-yellow-400"
+                >
+                  Got it
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
