@@ -14,6 +14,7 @@
     "@dimforge/rapier2d": "^0.19.3",
     "@dimforge/rapier3d-compat": "^0.19.3",
     "@google/genai": "^1.29.0",
+    "@pixi/gif": "^3.0.1",
     "@pixi/react": "^8.0.5",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.0",

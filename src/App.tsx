@@ -22,6 +22,7 @@ import { Lobby } from './components/Lobby';
 import { RouletteGame } from './components/RouletteGame';
 import { SlotsGame } from './components/SlotsGame';
 import { PokerGame } from './components/PokerGame';
+import { HorseRacingGame } from './components/HorseRacingGame';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('lobby');
@@ -51,38 +52,38 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-surface overflow-hidden">
       {/* Top bar */}
-      <header className="h-20 flex items-center justify-between px-8 bg-surface/80 backdrop-blur-xl border-b border-outline-variant/10 sticky top-0 z-50">
-        <div className="flex items-center gap-12">
+      <header className="h-14 flex items-center justify-between px-4 bg-surface/80 backdrop-blur-xl border-b border-outline-variant/10 sticky top-0 z-50 lg:px-5">
+        <div className="flex items-center gap-6">
           <div 
             onClick={() => setCurrentPage('lobby')}
-            className="text-2xl font-black italic text-secondary uppercase tracking-tighter mr-8 cursor-pointer hover:opacity-80 transition-opacity font-lobster"
+            className="text-lg font-black italic text-secondary uppercase tracking-tighter mr-2.5 cursor-pointer hover:opacity-80 transition-opacity font-lobster lg:text-xl"
           >
             Rias Gremori's <span className="text-white">Free Casino</span>
           </div>
         </div>
 
         {/* MULTIPLAYER SESSION HEADER (Universal) */}
-          <div className="flex-1 flex items-center justify-center px-8">
-            <div className="flex items-center gap-4 bg-surface-container/50 p-1.5 rounded-2xl border border-white/5">
+          <div className="flex-1 flex items-center justify-center px-2">
+            <div className="flex items-center gap-2 bg-surface-container/50 p-1 rounded-2xl border border-white/5">
                 {players.map(p => (
                     <button 
                         key={p.id} 
                         onClick={() => setActivePlayerId(p.id)}
                         className={cn(
-                            "flex items-center gap-3 px-4 py-2 rounded-xl transition-all relative overflow-hidden group",
+                            "flex items-center gap-2 px-2.5 py-1 rounded-xl transition-all relative overflow-hidden group",
                             activePlayerId === p.id ? "bg-secondary text-black shadow-lg shadow-secondary/20" : "hover:bg-white/5 text-on-surface/60"
                         )}
                     >
                         <div 
-                            className="w-2.5 h-2.5 rounded-full shadow-sm" 
+                            className="w-1.5 h-1.5 rounded-full shadow-sm" 
                             style={{ backgroundColor: activePlayerId === p.id ? '#000' : p.color }} 
                         />
                         <div className="text-left">
-                            <p className={cn("text-[9px] font-black uppercase tracking-widest leading-none mb-0.5", activePlayerId === p.id ? "text-black/60" : "text-on-surface/40")}>
+                            <p className={cn("text-[7px] font-black uppercase tracking-[0.18em] leading-none mb-0.5", activePlayerId === p.id ? "text-black/60" : "text-on-surface/40")}>
                                 {p.name}
                             </p>
                             <p className={cn(
-                              "text-sm font-black font-headline tracking-tight",
+                              "text-[12px] font-black font-headline tracking-tight lg:text-[13px]",
                               p.balance < 0 ? "text-red-600" : ""
                             )}>
                                 ${p.balance.toLocaleString()}
@@ -96,9 +97,9 @@ export default function App() {
                 {players.length < 4 && (
                     <button 
                         onClick={addPlayer}
-                        className="w-10 h-10 rounded-xl border border-dashed border-outline-variant/30 flex items-center justify-center text-on-surface/30 hover:text-secondary hover:border-secondary transition-colors"
+                        className="w-8 h-8 rounded-xl border border-dashed border-outline-variant/30 flex items-center justify-center text-on-surface/30 hover:text-secondary hover:border-secondary transition-colors"
                     >
-                        <Plus size={18} />
+                        <Plus size={14} />
                     </button>
                 )}
             </div>
@@ -107,15 +108,15 @@ export default function App() {
           <div className="flex items-center gap-2">
             <button 
               onClick={() => setIsMuted(!isMuted)}
-              className="p-3 bg-surface-container hover:bg-surface-container-highest rounded-xl text-on-surface/60 hover:text-secondary transition-all active:scale-90 border border-white/5"
+              className="p-2 bg-surface-container hover:bg-surface-container-highest rounded-xl text-on-surface/60 hover:text-secondary transition-all active:scale-90 border border-white/5"
             >
-              {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+              {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </button>
           </div>
         </header>
 
         {/* Content Canvas */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden relative bg-surface-container-low scroll-smooth">
+        <main className="flex-1 min-h-0 relative bg-surface-container-low scroll-smooth overflow-y-auto">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentPage}
@@ -123,9 +124,15 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="min-h-full flex flex-col"
+              className={cn(
+                "min-h-0 flex flex-col",
+                currentPage === 'lobby' ? "min-h-full h-auto" : "h-full"
+              )}
             >
-              <div className="flex-1">
+              <div className={cn(
+                "flex-1 min-h-0",
+                currentPage === 'lobby' ? "h-auto" : "h-auto overflow-y-auto"
+              )}>
                 {currentPage === 'lobby' && <Lobby onNavigate={setCurrentPage} />}
                 {currentPage === 'roulette' && (
                   <RouletteGame 
@@ -157,17 +164,27 @@ export default function App() {
                     onExit={() => setCurrentPage('lobby')}
                   />
                 )}
+                {currentPage === 'horseracing' && (
+                  <HorseRacingGame 
+                    players={players} 
+                    activePlayerId={activePlayerId} 
+                    setPlayers={setPlayers} 
+                    onExit={() => setCurrentPage('lobby')}
+                  />
+                )}
               </div>
 
               {/* Universal Footer */}
-              <footer className="w-full py-16 px-12 border-t border-outline-variant/10 flex flex-col items-center justify-center space-y-8 bg-surface-container-low/50 mt-auto">
-                <div className="text-secondary opacity-50 font-lobster font-black italic text-2xl uppercase tracking-[0.2em]">
+              {currentPage === 'lobby' && (
+                <footer className="w-full py-4 px-6 border-t border-outline-variant/10 flex flex-col items-center justify-center space-y-1 bg-surface-container-low/50 mt-auto lg:py-5">
+                <div className="text-secondary opacity-50 font-lobster font-black italic text-base uppercase tracking-[0.16em] lg:text-lg">
                   Rias Gremori's Free Casino
                 </div>
-                <p className="text-[10px] font-medium text-on-surface/20 text-center uppercase tracking-widest">
+                <p className="text-[9px] font-medium text-on-surface/20 text-center uppercase tracking-widest">
                   © 2024 NOCTURNAL DEVIL. LICENSED BY GAMING CURAÇAO.
                 </p>
               </footer>
+              )}
             </motion.div>
           </AnimatePresence>
         </main>

@@ -10,191 +10,413 @@ export enum HandRank {
   HighCard = 0,
   Pair = 1,
   TwoPair = 2,
-  Straight = 3,
-  Flush = 4,
-  ThreeOfAKind = 5,
-  StraightFlush = 6,
-  FourOfAKind = 7
+  ThreeOfAKind = 3,
+  Straight = 4,
+  Flush = 5,
+  FullHouse = 6,
+  FourOfAKind = 7,
+  StraightFlush = 8
 }
 
 export interface HandResult {
   rank: HandRank;
-  score: number; // For tie-breaking
-  cards: Card[]; // The 4 cards used
+  score: number;
+  cards: Card[];
   description: string;
 }
 
+export type PokerSeatStatus = 'active' | 'folded' | 'all-in' | 'out';
+
+export interface PokerPlayerState {
+  id: string;
+  name: string;
+  isBot: boolean;
+  stack: number;
+  cards: Card[];
+  currentBet: number;
+  totalContribution: number;
+  status: PokerSeatStatus;
+  actedThisStreet: boolean;
+  lastAction?: string;
+  handResult?: HandResult;
+  winnings?: number;
+  sessionProfit: number;
+}
+
+export interface SidePot {
+  amount: number;
+  eligiblePlayerIds: string[];
+}
+
+export const SMALL_BLIND = 25;
+export const BIG_BLIND = 50;
+
+const SCORE_BASE = 15;
+
 const RANK_VALUES: Record<Rank, number> = {
-  '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10,
-  'J': 11, 'Q': 12, 'K': 13, 'A': 14
+  '2': 2,
+  '3': 3,
+  '4': 4,
+  '5': 5,
+  '6': 6,
+  '7': 7,
+  '8': 8,
+  '9': 9,
+  '10': 10,
+  J: 11,
+  Q: 12,
+  K: 13,
+  A: 14
 };
+
+const VALUE_TO_RANK: Record<number, Rank> = {
+  2: '2',
+  3: '3',
+  4: '4',
+  5: '5',
+  6: '6',
+  7: '7',
+  8: '8',
+  9: '9',
+  10: '10',
+  11: 'J',
+  12: 'Q',
+  13: 'K',
+  14: 'A'
+};
+
+const HAND_LABELS: Record<HandRank, string> = {
+  [HandRank.HighCard]: 'High Card',
+  [HandRank.Pair]: 'Pair',
+  [HandRank.TwoPair]: 'Two Pair',
+  [HandRank.ThreeOfAKind]: 'Three of a Kind',
+  [HandRank.Straight]: 'Straight',
+  [HandRank.Flush]: 'Flush',
+  [HandRank.FullHouse]: 'Full House',
+  [HandRank.FourOfAKind]: 'Four of a Kind',
+  [HandRank.StraightFlush]: 'Straight Flush'
+};
+
+export const getRankValue = (rank: Rank) => RANK_VALUES[rank];
 
 export const createDeck = (): Card[] => {
   const suits: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
   const ranks: Rank[] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
   const deck: Card[] = [];
+
   for (const suit of suits) {
     for (const rank of ranks) {
       deck.push({ suit, rank });
     }
   }
-  return deck.sort(() => Math.random() - 0.5);
+
+  for (let i = deck.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+
+  return deck;
 };
 
-export const getBest4CardHand = (cards: Card[]): HandResult => {
-  // Try every combination of 4 cards if we have more than 4 (e.g. 5 for player, 6 for dealer)
-  // Actually, for optimization, we can just sort and evaluate subsets if needed, 
-  // but with 4 from 5 (5 combinations) or 4 from 6 (15 combinations) it's small.
-  
-  let bestHand: HandResult | null = null;
-  
-  const combinations = getCombinations(cards, 4);
-  
-  for (const combo of combinations) {
-    const hand = evaluate4CardHand(combo);
-    if (!bestHand || compareHands(hand, bestHand) > 0) {
-      bestHand = hand;
+export const compareHands = (a: HandResult, b: HandResult): number => a.score - b.score;
+
+export const getBestHand = (cards: Card[]): HandResult => {
+  if (cards.length < 5) {
+    throw new Error('At least 5 cards are required to evaluate a Hold’em hand.');
+  }
+
+  let best: HandResult | null = null;
+  for (const combo of getCombinations(cards, 5)) {
+    const current = evaluate5CardHand(combo);
+    if (!best || compareHands(current, best) > 0) {
+      best = current;
     }
   }
-  
-  return bestHand!;
+
+  return best!;
 };
 
-function getCombinations(array: Card[], size: number): Card[][] {
+export const describeStreet = (communityCards: Card[]) => {
+  if (communityCards.length === 0) return 'Pre-Flop';
+  if (communityCards.length === 3) return 'Flop';
+  if (communityCards.length === 4) return 'Turn';
+  if (communityCards.length === 5) return 'River';
+  return 'Showdown';
+};
+
+export const buildSidePots = (
+  players: Pick<PokerPlayerState, 'id' | 'totalContribution' | 'status'>[]
+): SidePot[] => {
+  const contributors = players
+    .filter((player) => player.totalContribution > 0)
+    .sort((a, b) => a.totalContribution - b.totalContribution);
+
+  if (contributors.length === 0) {
+    return [];
+  }
+
+  const uniqueLevels = [...new Set(contributors.map((player) => player.totalContribution))];
+  const pots: SidePot[] = [];
+  let previousLevel = 0;
+
+  for (const level of uniqueLevels) {
+    const participants = contributors.filter((player) => player.totalContribution >= level);
+    const increment = level - previousLevel;
+    const amount = increment * participants.length;
+    const eligiblePlayerIds = participants
+      .filter((player) => player.status !== 'folded' && player.status !== 'out')
+      .map((player) => player.id);
+
+    if (amount > 0 && eligiblePlayerIds.length > 0) {
+      pots.push({ amount, eligiblePlayerIds });
+    }
+
+    previousLevel = level;
+  }
+
+  return pots;
+};
+
+export const getNextEligibleIndex = (
+  players: PokerPlayerState[],
+  startIndex: number,
+  includeAllIn = false
+): number => {
+  if (players.length === 0) {
+    return -1;
+  }
+
+  for (let step = 1; step <= players.length; step += 1) {
+    const index = (startIndex + step + players.length) % players.length;
+    const player = players[index];
+    if (
+      player.status === 'active' ||
+      (includeAllIn && player.status === 'all-in')
+    ) {
+      return index;
+    }
+  }
+
+  return -1;
+};
+
+export const countPlayersInHand = (players: PokerPlayerState[]) =>
+  players.filter((player) => player.status !== 'folded' && player.status !== 'out').length;
+
+export const countPlayersAbleToAct = (players: PokerPlayerState[]) =>
+  players.filter((player) => player.status === 'active').length;
+
+export const getHoleCardStrength = (cards: Card[]): number => {
+  if (cards.length < 2) {
+    return 0;
+  }
+
+  const [first, second] = cards;
+  const high = Math.max(getRankValue(first.rank), getRankValue(second.rank));
+  const low = Math.min(getRankValue(first.rank), getRankValue(second.rank));
+  const isPair = first.rank === second.rank;
+  const suited = first.suit === second.suit;
+  const gap = high - low;
+
+  let score = high + low / 2;
+  if (isPair) score += 14 + high;
+  if (suited) score += 2.5;
+  if (gap === 1) score += 1.5;
+  if (gap > 4) score -= 2;
+  if (high >= 13) score += 1.5;
+
+  return score;
+};
+
+function evaluate5CardHand(cards: Card[]): HandResult {
+  const sorted = [...cards].sort((a, b) => RANK_VALUES[b.rank] - RANK_VALUES[a.rank]);
+  const values = sorted.map((card) => RANK_VALUES[card.rank]);
+  const counts = new Map<number, number>();
+
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  const grouped = [...counts.entries()].sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return b[0] - a[0];
+  });
+
+  const isFlush = sorted.every((card) => card.suit === sorted[0].suit);
+  const straightHigh = getStraightHigh(values);
+  const isStraight = straightHigh !== null;
+
+  if (isFlush && isStraight) {
+    return {
+      rank: HandRank.StraightFlush,
+      score: encodeScore(HandRank.StraightFlush, [straightHigh]),
+      cards: orderStraightCards(sorted, straightHigh),
+      description: `${HAND_LABELS[HandRank.StraightFlush]}, ${rankLabel(straightHigh)} high`
+    };
+  }
+
+  if (grouped[0][1] === 4) {
+    const fourKind = grouped[0][0];
+    const kicker = grouped[1][0];
+    return {
+      rank: HandRank.FourOfAKind,
+      score: encodeScore(HandRank.FourOfAKind, [fourKind, kicker]),
+      cards: orderByGroupedValues(sorted, [fourKind, kicker]),
+      description: `${HAND_LABELS[HandRank.FourOfAKind]}, ${pluralRank(fourKind)}`
+    };
+  }
+
+  if (grouped[0][1] === 3 && grouped[1][1] === 2) {
+    const trip = grouped[0][0];
+    const pair = grouped[1][0];
+    return {
+      rank: HandRank.FullHouse,
+      score: encodeScore(HandRank.FullHouse, [trip, pair]),
+      cards: orderByGroupedValues(sorted, [trip, pair]),
+      description: `${HAND_LABELS[HandRank.FullHouse]}, ${pluralRank(trip)} full of ${pluralRank(pair)}`
+    };
+  }
+
+  if (isFlush) {
+    return {
+      rank: HandRank.Flush,
+      score: encodeScore(HandRank.Flush, values),
+      cards: sorted,
+      description: `${HAND_LABELS[HandRank.Flush]}, ${rankLabel(values[0])} high`
+    };
+  }
+
+  if (isStraight) {
+    return {
+      rank: HandRank.Straight,
+      score: encodeScore(HandRank.Straight, [straightHigh]),
+      cards: orderStraightCards(sorted, straightHigh),
+      description: `${HAND_LABELS[HandRank.Straight]}, ${rankLabel(straightHigh)} high`
+    };
+  }
+
+  if (grouped[0][1] === 3) {
+    const trip = grouped[0][0];
+    const kickers = grouped.slice(1).map(([value]) => value).sort((a, b) => b - a);
+    return {
+      rank: HandRank.ThreeOfAKind,
+      score: encodeScore(HandRank.ThreeOfAKind, [trip, ...kickers]),
+      cards: orderByGroupedValues(sorted, [trip, ...kickers]),
+      description: `${HAND_LABELS[HandRank.ThreeOfAKind]}, ${pluralRank(trip)}`
+    };
+  }
+
+  if (grouped[0][1] === 2 && grouped[1][1] === 2) {
+    const pairValues = grouped
+      .filter(([, count]) => count === 2)
+      .map(([value]) => value)
+      .sort((a, b) => b - a);
+    const kicker = grouped.find(([, count]) => count === 1)![0];
+    return {
+      rank: HandRank.TwoPair,
+      score: encodeScore(HandRank.TwoPair, [...pairValues, kicker]),
+      cards: orderByGroupedValues(sorted, [...pairValues, kicker]),
+      description: `${HAND_LABELS[HandRank.TwoPair]}, ${pluralRank(pairValues[0])} and ${pluralRank(pairValues[1])}`
+    };
+  }
+
+  if (grouped[0][1] === 2) {
+    const pair = grouped[0][0];
+    const kickers = grouped.slice(1).map(([value]) => value).sort((a, b) => b - a);
+    return {
+      rank: HandRank.Pair,
+      score: encodeScore(HandRank.Pair, [pair, ...kickers]),
+      cards: orderByGroupedValues(sorted, [pair, ...kickers]),
+      description: `${HAND_LABELS[HandRank.Pair]}, ${pluralRank(pair)}`
+    };
+  }
+
+  return {
+    rank: HandRank.HighCard,
+    score: encodeScore(HandRank.HighCard, values),
+    cards: sorted,
+    description: `${HAND_LABELS[HandRank.HighCard]}, ${rankLabel(values[0])}`
+  };
+}
+
+function getCombinations(cards: Card[], size: number): Card[][] {
   const result: Card[][] = [];
-  function helper(start: number, combo: Card[]) {
-    if (combo.length === size) {
-      result.push([...combo]);
+
+  function build(startIndex: number, combination: Card[]) {
+    if (combination.length === size) {
+      result.push([...combination]);
       return;
     }
-    for (let i = start; i < array.length; i++) {
-      combo.push(array[i]);
-      helper(i + 1, combo);
-      combo.pop();
+
+    for (let index = startIndex; index < cards.length; index += 1) {
+      combination.push(cards[index]);
+      build(index + 1, combination);
+      combination.pop();
     }
   }
-  helper(0, []);
+
+  build(0, []);
   return result;
 }
 
-function evaluate4CardHand(cards: Card[]): HandResult {
-  const sorted = [...cards].sort((a, b) => RANK_VALUES[b.rank] - RANK_VALUES[a.rank]);
-  const ranks = sorted.map(c => RANK_VALUES[c.rank]);
-  const suits = sorted.map(c => c.suit);
-  
-  const counts: Record<number, number> = {};
-  ranks.forEach(r => counts[r] = (counts[r] || 0) + 1);
-  const countValues = Object.values(counts).sort((a, b) => b - a);
-  const rankEntries = Object.entries(counts).map(([r, c]) => ({ r: parseInt(r), c })).sort((a,b) => b.c - a.c || b.r - a.r);
+function getStraightHigh(values: number[]): number | null {
+  const unique = [...new Set(values)].sort((a, b) => b - a);
 
-  const isFlush = suits.every(s => s === suits[0]);
-  
-  // Straight check (including A234)
-  let isStraight = false;
-  let straightHigh = ranks[0];
-  if (ranks[0] - ranks[3] === 3 && new Set(ranks).size === 4) {
-    isStraight = true;
-  } else if (ranks[0] === 14 && ranks[1] === 4 && ranks[2] === 3 && ranks[3] === 2) {
-    isStraight = true;
-    straightHigh = 4; // Low straight
+  if (unique.length !== 5) {
+    return null;
   }
 
-  // 4 of a Kind
-  if (countValues[0] === 4) {
-    return { rank: HandRank.FourOfAKind, score: HandRank.FourOfAKind * 1000000 + rankEntries[0].r, cards: sorted, description: 'Four of a Kind' };
+  if (unique[0] - unique[4] === 4) {
+    return unique[0];
   }
-  
-  // Straight Flush
-  if (isFlush && isStraight) {
-    return { rank: HandRank.StraightFlush, score: HandRank.StraightFlush * 1000000 + straightHigh, cards: sorted, description: 'Straight Flush' };
+
+  const wheel = [14, 5, 4, 3, 2];
+  if (wheel.every((value, index) => unique[index] === value)) {
+    return 5;
   }
-  
-  // 3 of a Kind
-  if (countValues[0] === 3) {
-    return { rank: HandRank.ThreeOfAKind, score: HandRank.ThreeOfAKind * 1000000 + rankEntries[0].r * 100 + rankEntries[1].r, cards: sorted, description: 'Three of a Kind' };
-  }
-  
-  // Flush
-  if (isFlush) {
-    return { rank: HandRank.Flush, score: HandRank.Flush * 1000000 + ranks[0] * 1000 + ranks[1] * 100 + ranks[2] * 10 + ranks[3], cards: sorted, description: 'Flush' };
-  }
-  
-  // Straight
-  if (isStraight) {
-    return { rank: HandRank.Straight, score: HandRank.Straight * 1000000 + straightHigh, cards: sorted, description: 'Straight' };
-  }
-  
-  // Two Pair
-  if (countValues[0] === 2 && countValues[1] === 2) {
-    return { rank: HandRank.TwoPair, score: HandRank.TwoPair * 1000000 + rankEntries[0].r * 100 + rankEntries[1].r, cards: sorted, description: 'Two Pair' };
-  }
-  
-  // Pair
-  if (countValues[0] === 2) {
-    return { rank: HandRank.Pair, score: HandRank.Pair * 1000000 + rankEntries[0].r * 1000 + rankEntries[1].r * 100 + rankEntries[2].r, cards: sorted, description: `Pair of ${sorted.find(c => RANK_VALUES[c.rank] === rankEntries[0].r)?.rank}s` };
-  }
-  
-  // High Card
-  return { rank: HandRank.HighCard, score: HandRank.HighCard * 1000000 + ranks[0] * 1000 + ranks[1] * 100 + ranks[2] * 10 + ranks[3], cards: sorted, description: `High Card ${sorted[0].rank}` };
+
+  return null;
 }
 
-export const compareHands = (a: HandResult, b: HandResult): number => {
-  return a.score - b.score;
-};
+function encodeScore(rank: HandRank, kickers: number[]): number {
+  let encoded = rank;
+  for (const kicker of kickers) {
+    encoded = encoded * SCORE_BASE + kicker;
+  }
+  return encoded;
+}
 
-export const dealerQualifies = (hand: HandResult): boolean => {
-  // Image says "King high or better"
-  if (hand.rank > HandRank.HighCard) return true;
-  const highCardRank = hand.cards[0].rank;
-  const rankValues: Record<string, number> = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14 };
-  return rankValues[highCardRank] >= 13; // King is 13
-};
+function orderByGroupedValues(cards: Card[], values: number[]): Card[] {
+  const copied = [...cards];
+  const ordered: Card[] = [];
 
-export const getAcesUpPayout = (rank: HandRank, cards: Card[]): number => {
-  // Typically:
-  // Pair of Aces: 1:1
-  // Two Pair: 2:1
-  // Straight: 5:1
-  // Flush: 6:1
-  // Three of a Kind: 8:1
-  // Straight Flush: 40:1
-  // Four of a Kind: 50:1
-  
-  const sorted = [...cards].sort((a, b) => RANK_VALUES[b.rank] - RANK_VALUES[a.rank]);
-  const ranks = sorted.map(c => RANK_VALUES[c.rank]);
+  for (const value of values) {
+    for (let index = copied.length - 1; index >= 0; index -= 1) {
+      if (RANK_VALUES[copied[index].rank] === value) {
+        ordered.push(copied[index]);
+        copied.splice(index, 1);
+      }
+    }
+  }
 
-  if (rank === HandRank.FourOfAKind) return 50;
-  if (rank === HandRank.StraightFlush) return 40;
-  if (rank === HandRank.ThreeOfAKind) return 8;
-  if (rank === HandRank.Flush) return 6;
-  if (rank === HandRank.Straight) return 5;
-  if (rank === HandRank.TwoPair) return 2;
-  if (rank === HandRank.Pair && ranks.includes(14)) return 1;
-  return 0;
-};
+  return ordered;
+}
 
-export const getAnteBonusPayout = (rank: HandRank): number => {
-  // Typically:
-  // Three of a Kind: 2:1
-  // Straight Flush: 20:1
-  // Four of a Kind: 25:1
-  if (rank === HandRank.FourOfAKind) return 25;
-  if (rank === HandRank.StraightFlush) return 20;
-  if (rank === HandRank.ThreeOfAKind) return 2;
-  return 0;
-};
+function orderStraightCards(cards: Card[], straightHigh: number): Card[] {
+  if (straightHigh === 5) {
+    const wheelValues = [5, 4, 3, 2, 14];
+    return wheelValues.map((value) => cards.find((card) => RANK_VALUES[card.rank] === value)!);
+  }
 
-export interface PokerPlayerState {
-    id: string;
-    name: string;
-    isBot: boolean;
-    cards: Card[];
-    ante: number;
-    play: number;
-    acesUp: number;
-    folded: boolean;
-    result?: string;
-    payout?: number;
-    handResult?: HandResult;
-    sessionProfit: number;
+  const targetValues = [straightHigh, straightHigh - 1, straightHigh - 2, straightHigh - 3, straightHigh - 4];
+  return targetValues.map((value) => cards.find((card) => RANK_VALUES[card.rank] === value)!);
+}
+
+function rankLabel(value: number) {
+  return value === 14 ? 'Ace' : VALUE_TO_RANK[value];
+}
+
+function pluralRank(value: number) {
+  const rank = rankLabel(value);
+  return rank.endsWith('x') ? `${rank}es` : `${rank}s`;
 }

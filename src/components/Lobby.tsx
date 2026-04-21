@@ -37,6 +37,17 @@ const games: Game[] = [
     type: 'table',
     status: 'new',
     players: 128
+  },
+  {
+    id: 'horseracing',
+    title: 'VIP HORSE DERBY',
+    description: 'Place your bets on high-speed Thoroughbreds.',
+    image: 'https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/heads/main/images/horse_race_icon.jpg',
+    minBet: 10,
+    maxBet: 10000,
+    type: 'live',
+    status: 'new',
+    players: 89
   }
 ];
 

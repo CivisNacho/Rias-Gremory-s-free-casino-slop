@@ -1,4 +1,4 @@
-export type Page = 'lobby' | 'slots' | 'roulette' | 'poker';
+export type Page = 'lobby' | 'slots' | 'roulette' | 'poker' | 'horseracing';
 
 export interface Game {
   id: string;

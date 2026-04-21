@@ -1,699 +1,1156 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { 
-  RotateCcw, 
-  Undo, 
-  ArrowLeft, 
-  ChevronRight, 
-  User, 
-  Cpu, 
-  ShieldCheck,
-  Trophy,
-  History,
-  DollarSign,
-  Settings,
-  HelpCircle,
-  Clock,
-  Star,
-  LayoutGrid,
-  Award,
-  Gamepad2,
-  MessageSquare,
-  X,
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  Crown,
   Flag,
+  RotateCcw,
+  ShieldCheck,
+  Target,
+  Trophy,
+  Wallet,
   Zap
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import confetti from 'canvas-confetti';
-import { cn, formatCurrency } from '../lib/utils';
-import { 
-  createDeck, 
-  Card, 
-  HandResult, 
-  HandRank, 
-  getBest4CardHand, 
-  compareHands, 
-  getAcesUpPayout, 
-  getAnteBonusPayout,
-  dealerQualifies,
-  PokerPlayerState
+import { cn } from '../lib/utils';
+import {
+  BIG_BLIND,
+  SMALL_BLIND,
+  Card,
+  HandRank,
+  PokerPlayerState,
+  buildSidePots,
+  compareHands,
+  countPlayersAbleToAct,
+  countPlayersInHand,
+  createDeck,
+  describeStreet,
+  getBestHand,
+  getHoleCardStrength,
+  getNextEligibleIndex
 } from '../lib/pokerUtils';
 import { RoulettePlayer } from '../lib/rouletteUtils';
 import { PokerBoard } from './PokerBoard';
 
-// --- Constants ---
-const CHIPS = [50, 100, 500];
-const CHIP_COLORS = {
-  50: 'bg-[#210934] border-[#4b1d7d] text-purple-200',
-  100: 'bg-[#3b2a09] border-[#8e6616] text-yellow-500',
-  500: 'bg-[#093234] border-[#166063] text-cyan-400'
+const BOT_NAMES = ['Issei', 'Koneko', 'Kiba', 'Xenovia'];
+const TABLE_SIZE = 5;
+
+type TablePhase = 'idle' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'payout';
+type PlayerAction = 'fold' | 'check' | 'call' | 'raise' | 'all-in';
+type ChipPulse = {
+  id: number;
+  playerId: string;
+  amount: number;
+  direction: 'toPot' | 'fromPot';
+  tone: 'good' | 'bad' | 'neutral';
 };
 
-const BOT_NAMES = ['Issei', 'Koneko', 'Kiba', 'Xenovia', 'Gaspar'];
-
-// --- Audio Engine (Subtle synthesized sounds) ---
 const usePokerAudio = () => {
-    const audioCtx = useRef<AudioContext | null>(null);
+  const audioCtx = useRef<AudioContext | null>(null);
 
-    const init = useCallback(() => {
-        if (!audioCtx.current) {
-            audioCtx.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        }
-        if (audioCtx.current.state === 'suspended') {
-            audioCtx.current.resume();
-        }
-    }, []);
+  const init = useCallback(() => {
+    if (!audioCtx.current) {
+      audioCtx.current = new (window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)!();
+    }
+    if (audioCtx.current.state === 'suspended') {
+      void audioCtx.current.resume();
+    }
+  }, []);
 
-    const playTone = useCallback((freq: number, type: OscillatorType = 'sine', vol = 0.1, duration = 0.1, decay = true) => {
-        if (!audioCtx.current) return;
-        const osc = audioCtx.current.createOscillator();
-        const gain = audioCtx.current.createGain();
-        
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, audioCtx.current.currentTime);
-        
-        gain.gain.setValueAtTime(vol, audioCtx.current.currentTime);
-        if (decay) {
-            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.current.currentTime + duration);
-        } else {
-            gain.gain.linearRampToValueAtTime(0, audioCtx.current.currentTime + duration);
-        }
-        
-        osc.connect(gain);
-        gain.connect(audioCtx.current.destination);
-        
-        osc.start();
-        osc.stop(audioCtx.current.currentTime + duration);
-    }, []);
+  const playTone = useCallback((freq: number, type: OscillatorType, volume: number, duration: number) => {
+    if (!audioCtx.current) return;
+    const oscillator = audioCtx.current.createOscillator();
+    const gain = audioCtx.current.createGain();
+    oscillator.type = type;
+    oscillator.frequency.value = freq;
+    gain.gain.setValueAtTime(volume, audioCtx.current.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.current.currentTime + duration);
+    oscillator.connect(gain);
+    gain.connect(audioCtx.current.destination);
+    oscillator.start();
+    oscillator.stop(audioCtx.current.currentTime + duration);
+  }, []);
 
-    const playNoise = useCallback((duration: number, filterFreq: number, vol: number) => {
-        if (!audioCtx.current) return;
-        const bufferSize = audioCtx.current.sampleRate * duration;
-        const buffer = audioCtx.current.createBuffer(1, bufferSize, audioCtx.current.sampleRate);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-            data[i] = Math.random() * 2 - 1; // White noise
-        }
-        
-        const noise = audioCtx.current.createBufferSource();
-        noise.buffer = buffer;
-        
-        const filter = audioCtx.current.createBiquadFilter();
-        filter.type = 'bandpass';
-        filter.frequency.value = filterFreq;
-        
-        const gain = audioCtx.current.createGain();
-        gain.gain.setValueAtTime(vol, audioCtx.current.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.current.currentTime + duration);
-        
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(audioCtx.current.destination);
-        
-        noise.start();
-    }, []);
-
-    const cardFlick = useCallback(() => {
-        init();
-        playNoise(0.12, 3000, 0.08); // Longer 'fshh' sliding sound
-        playTone(200, 'sine', 0.03, 0.04); // very soft initial impact
-    }, [init, playNoise, playTone]);
-
-    const cardReveal = useCallback(() => {
-        init();
-        playNoise(0.06, 1800, 0.08); // lighter snap for start of flip
-        playTone(700, 'sine', 0.01, 0.04, true);
-    }, [init, playNoise, playTone]);
-
-    const cardThud = useCallback(() => {
-        init();
-        // Layer 1: The felt impact (low end)
-        playTone(90, 'triangle', 0.15, 0.1, true); 
-        // Layer 2: The card edge (mid-high texture)
-        playNoise(0.04, 600, 0.06); 
-        // Layer 3: Subtle slap
-        playTone(250, 'sine', 0.05, 0.05, true);
-    }, [init, playNoise, playTone]);
-
-    const chipPlace = useCallback(() => {
-        init();
-        playTone(300, 'square', 0.03, 0.05); // slightly harder attack
-        setTimeout(() => playTone(500, 'triangle', 0.02, 0.05), 15);
-    }, [init, playTone]);
-
-    const winSound = useCallback(() => {
-        init();
-        [440, 554.37, 659.25, 880].forEach((f, i) => { // Added octave
-            setTimeout(() => playTone(f, 'sine', 0.06, 0.4), i * 120);
-        });
-    }, [init, playTone]);
-
-    const foldSound = useCallback(() => {
-        init();
-        playTone(80, 'sine', 0.1, 0.2); // lower thud
-        playNoise(0.2, 500, 0.05); // soft slide away
-    }, [init, playNoise, playTone]);
-
-    return { cardFlick, cardReveal, cardThud, chipPlace, winSound, foldSound, init };
+  return {
+    init,
+    chipPlace: () => {
+      init();
+      playTone(300, 'square', 0.04, 0.08);
+      setTimeout(() => playTone(520, 'triangle', 0.02, 0.08), 24);
+    },
+    cardReveal: () => {
+      init();
+      playTone(640, 'sine', 0.02, 0.08);
+    },
+    foldSound: () => {
+      init();
+      playTone(120, 'sawtooth', 0.03, 0.15);
+    },
+    winSound: () => {
+      init();
+      [440, 554, 659, 880].forEach((tone, index) => {
+        setTimeout(() => playTone(tone, 'sine', 0.04, 0.25), index * 90);
+      });
+    }
+  };
 };
-
-
 
 export interface PokerGameProps {
-    players: RoulettePlayer[];
-    activePlayerId: string;
-    setPlayers: React.Dispatch<React.SetStateAction<RoulettePlayer[]>>;
-    setActivePlayerId: (id: string) => void;
-    onAddPlayer: () => void;
-    onExit: () => void;
+  players: RoulettePlayer[];
+  activePlayerId: string;
+  setPlayers: React.Dispatch<React.SetStateAction<RoulettePlayer[]>>;
+  setActivePlayerId: (id: string) => void;
+  onAddPlayer: () => void;
+  onExit: () => void;
 }
 
 export const PokerGame = ({ players, activePlayerId, setPlayers, onExit }: PokerGameProps) => {
-    const [gameState, setGameState] = useState<'betting' | 'dealing' | 'decision' | 'showdown' | 'payout'>('betting');
-    const audio = usePokerAudio();
-    const [dealerCards, setDealerCards] = useState<Card[]>([]);
-    const [pokerPlayers, setPokerPlayers] = useState<PokerPlayerState[]>([]);
-    const [selectedChip, setSelectedChip] = useState(100);
-    const [history, setHistory] = useState<{rank: string, amount: number, time: string, status: 'WIN' | 'LOSS' | 'FOLD'}[]>([
-      { rank: 'Flush (K-High)', amount: 6000, time: '14:22', status: 'WIN' },
-      { rank: 'Two Pair', amount: -1000, time: '14:21', status: 'LOSS' },
-      { rank: 'No Pair', amount: -500, time: '14:18', status: 'FOLD' },
-    ]);
-    const [events, setEvents] = useState<{ time: string, label: string, amount?: string, context: string, color?: string, muted?: boolean }[]>([
-        { time: '14:22', label: 'Player placed', amount: '$1,000', context: 'Ante', color: 'text-yellow-500' },
-        { time: '14:21', label: 'Dealer reveals', context: 'A high - Qualified', muted: true },
-        { time: '14:18', label: 'New Hand Dealt', context: '5-Card Draw', muted: true },
-    ]);
+  const audio = usePokerAudio();
+  const showdownTimerRef = useRef<number | null>(null);
+  const chipPulseIdRef = useRef(0);
 
-    const addEvent = useCallback((label: string, context: string, amount?: string, color?: string, muted?: boolean) => {
-        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setEvents(prev => [{ time, label, amount, context, color, muted }, ...prev].slice(0, 10));
-    }, []);
+  const [phase, setPhase] = useState<TablePhase>('idle');
+  const [pokerPlayers, setPokerPlayers] = useState<PokerPlayerState[]>([]);
+  const [dealerIndex, setDealerIndex] = useState(-1);
+  const [currentTurnIndex, setCurrentTurnIndex] = useState(-1);
+  const [communityCards, setCommunityCards] = useState<Card[]>([]);
+  const [boardRunout, setBoardRunout] = useState<Card[]>([]);
+  const [currentBet, setCurrentBet] = useState(0);
+  const [lastRaiseSize, setLastRaiseSize] = useState(BIG_BLIND);
+  const [raiseAmount, setRaiseAmount] = useState(BIG_BLIND);
+  const [handMessage, setHandMessage] = useState('Blinds are 25/50. Start a new Texas Hold’em hand when you are ready.');
+  const [events, setEvents] = useState<{ time: string; label: string; detail: string; tone?: 'good' | 'bad' | 'neutral' }[]>([]);
+  const [history, setHistory] = useState<{ result: string; amount: number; time: string; tone: 'good' | 'bad' | 'neutral' }[]>([]);
+  const [chipPulse, setChipPulse] = useState<ChipPulse | null>(null);
 
-    const activePlayer = useMemo(() => players.find(p => p.id === activePlayerId) || players[0], [players, activePlayerId]);
+  const activeProfile = useMemo(
+    () => players.find((player) => player.id === activePlayerId) ?? players[0],
+    [players, activePlayerId]
+  );
 
-    // Initial setup for 4 players (human + bots)
-    useEffect(() => {
-        // Only initialize once or when the active human player changes
-        setPokerPlayers(prev => {
-            if (prev.length > 0 && prev.some(p => p.id === activePlayerId)) return prev;
+  const mainHuman = useMemo(
+    () => pokerPlayers.find((player) => player.id === activePlayerId),
+    [pokerPlayers, activePlayerId]
+  );
 
-            let currentPokerPlayers: PokerPlayerState[] = players.slice(0, 4).map(p => ({
-                id: p.id,
-                name: p.name,
-                isBot: false,
-                cards: [],
-                ante: 0,
-                play: 0,
-                acesUp: 0,
-                folded: false,
-                sessionProfit: 0
+  const totalPot = useMemo(
+    () => pokerPlayers.reduce((sum, player) => sum + player.totalContribution, 0),
+    [pokerPlayers]
+  );
+
+  const currentTurnPlayer = currentTurnIndex >= 0 ? pokerPlayers[currentTurnIndex] : undefined;
+  const revealAllCards = phase === 'showdown' || phase === 'payout';
+  const streetLabel = describeStreet(communityCards);
+  const phaseLabel = phase === 'idle' ? 'Table Ready' : phase === 'showdown' ? 'Cards Up' : phase === 'payout' ? 'Payout' : 'Betting Round';
+
+  const addEvent = useCallback((label: string, detail: string, tone: 'good' | 'bad' | 'neutral' = 'neutral') => {
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setEvents((previous) => [{ time, label, detail, tone }, ...previous].slice(0, 10));
+  }, []);
+
+  const addHistory = useCallback((result: string, amount: number, tone: 'good' | 'bad' | 'neutral') => {
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setHistory((previous) => [{ result, amount, time, tone }, ...previous].slice(0, 6));
+  }, []);
+
+  const syncExternalBalance = useCallback(
+    (playerId: string, delta: number) => {
+      setPlayers((previous) =>
+        previous.map((player) => (player.id === playerId ? { ...player, balance: player.balance + delta } : player))
+      );
+    },
+    [setPlayers]
+  );
+
+  const queueChipPulse = useCallback((playerId: string, amount: number, direction: ChipPulse['direction'], tone: ChipPulse['tone'] = 'neutral') => {
+    if (amount <= 0) return;
+    const id = ++chipPulseIdRef.current;
+    setChipPulse({ id, playerId, amount, direction, tone });
+    window.setTimeout(() => {
+      setChipPulse((current) => (current?.id === id ? null : current));
+    }, 1100);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (showdownTimerRef.current) {
+        window.clearTimeout(showdownTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeProfile) return;
+
+    setPokerPlayers((previous) => {
+      const existingBots = previous.filter((player) => player.isBot);
+      const bots =
+        existingBots.length > 0
+          ? existingBots
+          : BOT_NAMES.map((name, index) => ({
+              id: `bot-${index}`,
+              name,
+              isBot: true,
+              stack: 5000,
+              cards: [],
+              currentBet: 0,
+              totalContribution: 0,
+              status: 'active' as const,
+              actedThisStreet: false,
+              sessionProfit: 0
             }));
 
-            const botsNeeded = 4 - currentPokerPlayers.length;
-            for (let i = 0; i < botsNeeded; i++) {
-                currentPokerPlayers.push({
-                    id: `bot-${i}`,
-                    name: BOT_NAMES[i % BOT_NAMES.length],
-                    isBot: true,
-                    cards: [],
-                    ante: 0,
-                    play: 0,
-                    acesUp: 0,
-                    folded: false,
-                    sessionProfit: 0
-                });
-            }
-            return currentPokerPlayers;
-        });
-    }, [activePlayerId]);
+      const humanSeat: PokerPlayerState = {
+        id: activeProfile.id,
+        name: activeProfile.name,
+        isBot: false,
+        stack: activeProfile.balance,
+        cards: [],
+        currentBet: 0,
+        totalContribution: 0,
+        status: activeProfile.balance > 0 ? 'active' : 'out',
+        actedThisStreet: false,
+        sessionProfit: previous.find((player) => player.id === activeProfile.id)?.sessionProfit ?? 0
+      };
 
-    const handleBet = (type: 'ante' | 'acesUp', playerId: string = activePlayerId) => {
-        if (gameState !== 'betting') return;
-        
-        const player = players.find(p => p.id === playerId);
-        const pokerPlayer = pokerPlayers.find(p => p.id === playerId);
-        
-        if (!pokerPlayer) return;
-
-        if (!pokerPlayer.isBot) {
-            if (!player || player.balance < selectedChip) return;
-            audio.chipPlace();
-            setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, balance: p.balance - selectedChip } : p));
-            if (playerId === activePlayerId) {
-                addEvent('Player placed', type.charAt(0).toUpperCase() + type.slice(1), `$${selectedChip}`, 'text-cyan-400');
-            }
+      return [humanSeat, ...bots].slice(0, TABLE_SIZE).map((player): PokerPlayerState => {
+        if (player.id === activeProfile.id) {
+          return humanSeat;
         }
+        return player.stack > 0
+          ? { ...player, status: player.cards.length > 0 && player.status === 'all-in' ? 'all-in' : 'active' }
+          : { ...player, status: 'out' };
+      });
+    });
+  }, [activePlayerId]);
 
-        setPokerPlayers(prev => prev.map(p => p.id === playerId ? { ...p, [type]: p[type] + selectedChip } : p));
-    };
+  const getSeatRole = useCallback(
+    (seatIndex: number, roster: PokerPlayerState[]) => {
+      if (dealerIndex < 0 || roster.length === 0) return '';
+      const dealer = dealerIndex;
+      const smallBlind = getNextEligibleIndex(roster, dealer, true);
+      const bigBlind = smallBlind >= 0 ? getNextEligibleIndex(roster, smallBlind, true) : -1;
+      if (seatIndex === dealer) return 'Dealer';
+      if (seatIndex === smallBlind) return 'Small Blind';
+      if (seatIndex === bigBlind) return 'Big Blind';
+      return 'Seat';
+    },
+    [dealerIndex]
+  );
 
-    const clearBets = () => {
-        if (gameState !== 'betting') return;
-        const pp = pokerPlayers.find(pp => pp.id === activePlayerId);
-        if (!pp) return;
-        
-        setPlayers(prev => prev.map(p => p.id === activePlayerId ? { ...p, balance: p.balance + pp.ante + pp.acesUp } : p));
-        setPokerPlayers(prev => prev.map(p => p.id === activePlayerId ? { ...p, ante: 0, acesUp: 0 } : p));
-        addEvent('Player cleared', 'Bets returned', undefined, 'text-white/40', true);
-    };
+  const getLiveInsight = useCallback(() => {
+    if (!mainHuman) {
+      return 'The table is waiting for a valid bankroll.';
+    }
+    if (phase === 'idle') {
+      return 'A new hand will post the blinds automatically and start from the player left of the big blind.';
+    }
+    if (communityCards.length < 3) {
+      const strength = getHoleCardStrength(mainHuman.cards);
+      if (strength >= 30) return 'Premium hole cards. Pressure the table when the action comes to you.';
+      if (strength >= 20) return 'Playable pre-flop hand. Calling or raising can both make sense here.';
+      return 'Marginal pre-flop holding. Be disciplined if the action gets expensive.';
+    }
+    if (mainHuman.cards.length === 2 && communityCards.length >= 3) {
+      const best = getBestHand([...mainHuman.cards, ...communityCards]);
+      if (best.rank >= HandRank.Flush) return `You are sitting on a strong made hand: ${best.description}.`;
+      if (best.rank >= HandRank.Pair) return `You have ${best.description}. Watch the bet sizing and side-pot pressure.`;
+      return 'You have not connected strongly yet. Fold to heavy action unless the price is great.';
+    }
+    return 'Stay aware of stack depth, current bet, and who is already all-in.';
+  }, [communityCards, mainHuman, phase]);
 
-    const startDeal = () => {
-        if (gameState !== 'betting') return;
-        const mainPlayer = pokerPlayers.find(p => p.id === activePlayerId);
-        if (!mainPlayer || mainPlayer.ante === 0) return;
+  const shouldCompleteStreet = useCallback(
+    (roster: PokerPlayerState[], streetBet: number) => {
+      const activePlayers = roster.filter((player) => player.status === 'active');
+      if (activePlayers.length === 0) return true;
+      return activePlayers.every((player) => player.actedThisStreet && player.currentBet === streetBet);
+    },
+    []
+  );
 
-        audio.init();
-        // Auto-bet for bots
-        setPokerPlayers(prev => prev.map(p => {
-          if (p.isBot) {
-            const ante = 100;
-            const acesUp = Math.random() > 0.5 ? 100 : 0;
-            return { ...p, ante, acesUp };
+  const beginNextStreet = useCallback(
+    (roster: PokerPlayerState[], nextCommunityCards: Card[], nextPhase: TablePhase, board: Card[]) => {
+      const refreshedRoster = roster.map((player) =>
+        player.status === 'active'
+          ? { ...player, currentBet: 0, actedThisStreet: false, lastAction: undefined }
+          : { ...player, currentBet: 0, actedThisStreet: true }
+      );
+
+      setPokerPlayers(refreshedRoster);
+      setCommunityCards(nextCommunityCards);
+      setCurrentBet(0);
+      setLastRaiseSize(BIG_BLIND);
+      setPhase(nextPhase);
+
+      const openerIndex = getNextEligibleIndex(refreshedRoster, dealerIndex, false);
+      setCurrentTurnIndex(openerIndex);
+      setHandMessage(
+        nextPhase === 'flop'
+          ? 'Three community cards are out. Betting starts left of the dealer.'
+          : nextPhase === 'turn'
+            ? 'The turn is live. Stack pressure matters more now.'
+            : 'Final betting round. Set up the showdown or force folds.'
+      );
+      addEvent(describeStreet(nextCommunityCards), `${nextCommunityCards.length} community cards revealed`, 'neutral');
+
+      if (nextCommunityCards.length > communityCards.length) {
+        audio.cardReveal();
+      }
+
+      if (countPlayersAbleToAct(refreshedRoster) === 0) {
+        const fullBoard = board.slice(0, 5);
+        showdown(refreshedRoster, fullBoard);
+      }
+    },
+    [addEvent, audio, communityCards.length, dealerIndex]
+  );
+
+  const showdown = useCallback(
+    (roster: PokerPlayerState[], fullBoard: Card[]) => {
+      const evaluatedRoster = roster.map((player) => {
+        if (player.status === 'folded' || player.status === 'out') {
+          return { ...player, handResult: undefined, winnings: 0 };
+        }
+        const handResult = getBestHand([...player.cards, ...fullBoard]);
+        return { ...player, handResult, winnings: 0 };
+      });
+
+      const payouts: Record<string, number> = {};
+      const pots = buildSidePots(evaluatedRoster);
+
+      pots.forEach((pot) => {
+        const contenders = evaluatedRoster.filter((player) => pot.eligiblePlayerIds.includes(player.id) && player.handResult);
+        if (contenders.length === 0) return;
+
+        let winners = [contenders[0]];
+        for (let index = 1; index < contenders.length; index += 1) {
+          const comparison = compareHands(contenders[index].handResult!, winners[0].handResult!);
+          if (comparison > 0) {
+            winners = [contenders[index]];
+          } else if (comparison === 0) {
+            winners.push(contenders[index]);
           }
-          return p;
-        }));
+        }
 
-        const newDeck = createDeck();
-        let pointer = 0;
-        
-        const updatedPlayers = pokerPlayers.map(p => {
-            if (p.ante === 0 && !p.isBot) return p;
-            const cards = newDeck.slice(pointer, pointer + 5);
-            pointer += 5;
-            return { ...p, cards };
+        const baseShare = Math.floor(pot.amount / winners.length);
+        let remainder = pot.amount % winners.length;
+        const orderedWinners = [...winners].sort(
+          (left, right) => ((pokerPlayers.findIndex((player) => player.id === left.id) - dealerIndex + pokerPlayers.length) % pokerPlayers.length) -
+            ((pokerPlayers.findIndex((player) => player.id === right.id) - dealerIndex + pokerPlayers.length) % pokerPlayers.length)
+        );
+
+        orderedWinners.forEach((winner) => {
+          const bonusChip = remainder > 0 ? 1 : 0;
+          remainder = Math.max(0, remainder - 1);
+          payouts[winner.id] = (payouts[winner.id] ?? 0) + baseShare + bonusChip;
         });
+      });
 
-        const dCards = newDeck.slice(pointer, pointer + 5);
+      const settledRoster = evaluatedRoster.map((player) => {
+        const payout = payouts[player.id] ?? 0;
+        const profit = payout - player.totalContribution;
+        const nextStack = player.stack + payout;
+        return {
+          ...player,
+          winnings: payout,
+          stack: nextStack,
+          sessionProfit: player.sessionProfit + profit,
+          status: nextStack > 0 ? player.status : 'out'
+        };
+      });
 
-        setDealerCards(dCards);
-        setPokerPlayers(updatedPlayers);
-        setGameState('dealing');
-        addEvent('New Hand', 'Dealing 5 cards to each player...', undefined, 'text-white/20', true);
-        
-        // Log bot bets
-        updatedPlayers.filter(p => p.isBot && p.ante > 0).forEach(bot => {
-            addEvent(`${bot.name} placed`, 'Ante', `$${bot.ante}`, 'text-white/30', true);
-        });
+      settledRoster.forEach((player, index) => {
+        const original = roster[index];
+        const delta = player.stack - original.stack;
+        if (!player.isBot && delta !== 0) {
+          syncExternalBalance(player.id, delta);
+        }
+      });
 
-        setTimeout(() => setGameState('decision'), 800);
-    };
-
-    const handleDecision = (choice: 'fold' | 'play1x' | 'play3x', playerId: string = activePlayerId) => {
-        if (gameState !== 'decision') return;
-        
-        const currentPlayer = pokerPlayers.find(p => p.id === playerId);
-        if (!currentPlayer || currentPlayer.folded || currentPlayer.play > 0) return;
-
-        let playAmount = 0;
-        if (choice !== 'fold') {
-            const multiplier = choice === 'play1x' ? 1 : 3;
-            playAmount = currentPlayer.ante * multiplier;
-            
-            if (!currentPlayer.isBot) {
-                const playerBalance = players.find(p => p.id === playerId)?.balance || 0;
-                if (playerBalance < playAmount) return;
-                setPlayers(pPrev => pPrev.map(p => p.id === playerId ? { ...p, balance: p.balance - playAmount } : p));
-                audio.chipPlace();
-                addEvent('Player decided', choice === 'play1x' ? 'Play (1x)' : 'Play (3x)', `$${playAmount}`, 'text-yellow-500');
-            }
+      const humanResult = settledRoster.find((player) => player.id === activePlayerId);
+      if (humanResult) {
+        const profit = (humanResult.winnings ?? 0) - humanResult.totalContribution;
+        if (profit > 0) {
+          audio.winSound();
+          queueChipPulse(humanResult.id, humanResult.winnings ?? 0, 'fromPot', 'good');
+          confetti({
+            particleCount: 120,
+            spread: 80,
+            origin: { y: 0.72 },
+            colors: ['#facc15', '#22d3ee', '#ffffff']
+          });
+          addHistory(humanResult.handResult?.description ?? 'Showdown win', profit, 'good');
+          addEvent('Showdown won', `${humanResult.handResult?.description ?? 'Best hand'} for +$${profit}`, 'good');
+        } else if (profit < 0) {
+          addHistory(humanResult.handResult?.description ?? 'Showdown loss', profit, 'bad');
+          addEvent('Showdown lost', `${humanResult.handResult?.description ?? 'No winning pot'} for -$${Math.abs(profit)}`, 'bad');
         } else {
-            if (playerId === activePlayerId) {
-                audio.foldSound();
-                addEvent('Player folded', 'Hand Aborted', undefined, 'text-white/40', true);
-                setHistory(h => [{ rank: 'Folded', amount: -currentPlayer.ante, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), status: 'FOLD' as const }, ...h].slice(0, 5));
+          addHistory(humanResult.handResult?.description ?? 'Split pot', 0, 'neutral');
+          addEvent('Pot split', humanResult.handResult?.description ?? 'Chopped pot', 'neutral');
+        }
+      }
+
+      setPokerPlayers(
+        settledRoster.map((player) => ({
+          ...player,
+          currentBet: 0,
+          actedThisStreet: true,
+          lastAction:
+            (player.winnings ?? 0) > 0
+              ? `Won $${player.winnings}`
+              : player.status === 'folded'
+                ? 'Folded'
+                : 'No pot'
+        }))
+      );
+      setCommunityCards(fullBoard);
+      setCurrentTurnIndex(-1);
+      setCurrentBet(0);
+      setPhase('showdown');
+      setHandMessage('Showdown complete. Main pot and side pots were settled in order.');
+
+      if (showdownTimerRef.current) {
+        window.clearTimeout(showdownTimerRef.current);
+      }
+      showdownTimerRef.current = window.setTimeout(() => {
+        setPhase('payout');
+      }, 1800);
+    },
+    [activePlayerId, addEvent, addHistory, audio, dealerIndex, pokerPlayers, queueChipPulse, syncExternalBalance]
+  );
+
+  const awardLastPlayer = useCallback(
+    (roster: PokerPlayerState[]) => {
+      const winner = roster.find((player) => player.status !== 'folded' && player.status !== 'out');
+      if (!winner) return;
+
+      const pot = roster.reduce((sum, player) => sum + player.totalContribution, 0);
+      const settledRoster = roster.map((player) => {
+        const payout = player.id === winner.id ? pot : 0;
+        const profit = payout - player.totalContribution;
+        const nextStack = player.stack + payout;
+        return {
+          ...player,
+          winnings: payout,
+          stack: nextStack,
+          sessionProfit: player.sessionProfit + profit,
+          handResult: player.id === winner.id && communityCards.length >= 3 ? getBestHand([...player.cards, ...communityCards]) : player.handResult
+        };
+      });
+
+      settledRoster.forEach((player, index) => {
+        const delta = player.stack - roster[index].stack;
+        if (!player.isBot && delta !== 0) {
+          syncExternalBalance(player.id, delta);
+        }
+      });
+
+      const humanResult = settledRoster.find((player) => player.id === activePlayerId);
+      if (humanResult) {
+        const profit = (humanResult.winnings ?? 0) - humanResult.totalContribution;
+        if (profit > 0) {
+          audio.winSound();
+          queueChipPulse(winner.id, pot, 'fromPot', 'good');
+          addHistory('Fold equity', profit, 'good');
+        } else if (profit < 0) {
+          addHistory('Folded hand', profit, 'bad');
+        }
+      }
+
+      setPokerPlayers(
+        settledRoster.map((player) => ({
+          ...player,
+          currentBet: 0,
+          actedThisStreet: true,
+          lastAction: player.id === winner.id ? `Scooped $${pot}` : player.lastAction
+        }))
+      );
+      setCurrentTurnIndex(-1);
+      setCurrentBet(0);
+      setPhase('payout');
+      setHandMessage(`${winner.name} wins the pot uncontested.`);
+      addEvent('Hand ended', `${winner.name} collected $${pot} without showdown`, winner.id === activePlayerId ? 'good' : 'neutral');
+    },
+    [activePlayerId, addEvent, addHistory, audio, communityCards, queueChipPulse, syncExternalBalance]
+  );
+
+  const advanceAfterAction = useCallback(
+    (roster: PokerPlayerState[], nextCurrentBet: number, board: Card[]) => {
+      if (countPlayersInHand(roster) === 1) {
+        awardLastPlayer(roster);
+        return;
+      }
+
+      if (shouldCompleteStreet(roster, nextCurrentBet)) {
+        if (communityCards.length === 0) {
+          beginNextStreet(roster, board.slice(0, 3), 'flop', board);
+          return;
+        }
+        if (communityCards.length === 3) {
+          beginNextStreet(roster, board.slice(0, 4), 'turn', board);
+          return;
+        }
+        if (communityCards.length === 4) {
+          beginNextStreet(roster, board.slice(0, 5), 'river', board);
+          return;
+        }
+        showdown(roster, board.slice(0, 5));
+        return;
+      }
+
+      const nextTurn = getNextEligibleIndex(roster, currentTurnIndex, false);
+      setPokerPlayers(roster);
+      setCurrentBet(nextCurrentBet);
+      setCurrentTurnIndex(nextTurn);
+    },
+    [awardLastPlayer, beginNextStreet, communityCards.length, currentTurnIndex, shouldCompleteStreet, showdown]
+  );
+
+  const applyAction = useCallback(
+    (playerId: string, action: PlayerAction, actionAmount?: number) => {
+      const actingIndex = pokerPlayers.findIndex((player) => player.id === playerId);
+      if (actingIndex < 0) return;
+
+      const actor = pokerPlayers[actingIndex];
+      if (actor.status !== 'active') return;
+
+      const toCall = Math.max(0, currentBet - actor.currentBet);
+      let nextCurrentBet = currentBet;
+      let nextLastRaiseSize = lastRaiseSize;
+
+      const nextRoster = pokerPlayers.map((player) => ({ ...player }));
+      const nextActor = nextRoster[actingIndex];
+
+      const subtractFromStack = (amount: number) => {
+        const wager = Math.max(0, Math.min(nextActor.stack, amount));
+        nextActor.stack -= wager;
+        nextActor.currentBet += wager;
+        nextActor.totalContribution += wager;
+        if (!nextActor.isBot && wager > 0) {
+          syncExternalBalance(nextActor.id, -wager);
+        }
+        if (nextActor.stack === 0) {
+          nextActor.status = 'all-in';
+        }
+        return wager;
+      };
+
+      if (action === 'fold') {
+        nextActor.status = 'folded';
+        nextActor.actedThisStreet = true;
+        nextActor.lastAction = 'Folded';
+        if (!nextActor.isBot) audio.foldSound();
+        addEvent(nextActor.name, 'Folded', nextActor.isBot ? 'neutral' : 'bad');
+        setLastRaiseSize(nextLastRaiseSize);
+        advanceAfterAction(nextRoster, nextCurrentBet, boardRunout);
+        return;
+      }
+
+      if (action === 'check' && toCall === 0) {
+        nextActor.actedThisStreet = true;
+        nextActor.lastAction = 'Checked';
+        addEvent(nextActor.name, 'Checked', 'neutral');
+        setLastRaiseSize(nextLastRaiseSize);
+        advanceAfterAction(nextRoster, nextCurrentBet, boardRunout);
+        return;
+      }
+
+      if (action === 'call') {
+        const paid = subtractFromStack(toCall);
+        nextActor.actedThisStreet = true;
+        nextActor.lastAction = paid < toCall ? `All-in for $${paid}` : `Called $${paid}`;
+        queueChipPulse(nextActor.id, paid, 'toPot', nextActor.isBot ? 'neutral' : 'good');
+        audio.chipPlace();
+        addEvent(nextActor.name, nextActor.lastAction, 'neutral');
+        setLastRaiseSize(nextLastRaiseSize);
+        advanceAfterAction(nextRoster, nextCurrentBet, boardRunout);
+        return;
+      }
+
+      if (action === 'all-in') {
+        const paid = subtractFromStack(nextActor.stack);
+        const newBet = nextActor.currentBet;
+        const increase = newBet - currentBet;
+        nextCurrentBet = Math.max(currentBet, newBet);
+        nextActor.actedThisStreet = true;
+        nextActor.lastAction = `All-in $${paid}`;
+        queueChipPulse(nextActor.id, paid, 'toPot', nextActor.isBot ? 'neutral' : 'good');
+        if (newBet > currentBet) {
+          nextRoster.forEach((player, index) => {
+            if (index !== actingIndex && player.status === 'active') {
+              player.actedThisStreet = false;
             }
+          });
+        }
+        if (increase >= Math.max(lastRaiseSize, BIG_BLIND)) {
+          nextLastRaiseSize = increase;
+        }
+        audio.chipPlace();
+        addEvent(nextActor.name, nextActor.lastAction, nextActor.isBot ? 'neutral' : 'good');
+        setLastRaiseSize(nextLastRaiseSize);
+        advanceAfterAction(nextRoster, nextCurrentBet, boardRunout);
+        return;
+      }
+
+      if (action === 'raise') {
+        const minimumRaise = currentBet === 0 ? BIG_BLIND : Math.max(lastRaiseSize, BIG_BLIND);
+        const chosenRaiseAmount = Math.max(actionAmount ?? minimumRaise, minimumRaise);
+        const targetBet = currentBet + chosenRaiseAmount;
+        const desiredAdditional = targetBet - nextActor.currentBet;
+        const paid = subtractFromStack(desiredAdditional);
+        const newBet = nextActor.currentBet;
+        const increase = newBet - currentBet;
+
+        nextCurrentBet = Math.max(currentBet, newBet);
+        nextActor.actedThisStreet = true;
+        nextActor.lastAction = currentBet === 0 ? `Bet $${newBet}` : `Raised to $${newBet}`;
+        queueChipPulse(nextActor.id, paid, 'toPot', nextActor.isBot ? 'neutral' : 'good');
+
+        if (newBet > currentBet) {
+          nextRoster.forEach((player, index) => {
+            if (index !== actingIndex && player.status === 'active') {
+              player.actedThisStreet = false;
+            }
+          });
+        }
+        if (increase >= minimumRaise) {
+          nextLastRaiseSize = increase;
         }
 
-        setPokerPlayers(prev => {
-            const next = [...prev];
-            const pIdx = next.findIndex(p => p.id === playerId);
-            if (pIdx === -1) return prev;
+        audio.chipPlace();
+        addEvent(nextActor.name, nextActor.lastAction, nextActor.isBot ? 'neutral' : 'good');
+        setLastRaiseSize(nextLastRaiseSize);
+        advanceAfterAction(nextRoster, nextCurrentBet, boardRunout);
+        return;
+      }
+    },
+    [
+      addEvent,
+      advanceAfterAction,
+      audio,
+      boardRunout,
+      currentBet,
+      lastRaiseSize,
+      pokerPlayers,
+      queueChipPulse,
+      syncExternalBalance
+    ]
+  );
 
-            if (choice === 'fold') {
-                next[pIdx].folded = true;
-            } else {
-                next[pIdx].play = playAmount;
-            }
+  const startHand = useCallback(() => {
+    if (showdownTimerRef.current) {
+      window.clearTimeout(showdownTimerRef.current);
+    }
 
-            const allActed = next.every(p => p.ante === 0 || p.folded || p.play > 0);
-            if (allActed) {
-                setTimeout(() => setGameState('showdown'), 500);
-            }
-            return next;
-        });
+    const activeSeats = pokerPlayers.filter((player) => player.stack > 0);
+    if (activeSeats.length < 2) {
+      setHandMessage('At least two funded seats are needed to start a hand.');
+      return;
+    }
+
+    const deck = createDeck();
+    let pointer = 0;
+
+    const preparedRoster: PokerPlayerState[] = pokerPlayers.map((player) => ({
+      ...player,
+      cards: [],
+      currentBet: 0,
+      totalContribution: 0,
+      actedThisStreet: false,
+      lastAction: undefined,
+      winnings: 0,
+      handResult: undefined,
+      status: player.stack > 0 ? 'active' : 'out'
+    }));
+
+    const nextDealer = getNextEligibleIndex(preparedRoster, dealerIndex, true);
+    const smallBlindIndex = getNextEligibleIndex(preparedRoster, nextDealer, true);
+    const bigBlindIndex = getNextEligibleIndex(preparedRoster, smallBlindIndex, true);
+    const actionIndex = getNextEligibleIndex(preparedRoster, bigBlindIndex, false);
+
+    preparedRoster.forEach((player) => {
+      if (player.status !== 'out') {
+        player.cards = [deck[pointer], deck[pointer + 1]];
+        pointer += 2;
+      }
+    });
+
+    const runout = deck.slice(pointer, pointer + 5);
+
+    const postBlind = (seatIndex: number, amount: number, label: string) => {
+      if (seatIndex < 0) return;
+      const player = preparedRoster[seatIndex];
+      const blind = Math.min(player.stack, amount);
+      player.stack -= blind;
+      player.currentBet = blind;
+      player.totalContribution = blind;
+      player.lastAction = label;
+      player.status = player.stack === 0 ? 'all-in' : 'active';
+      if (!player.isBot && blind > 0) {
+        syncExternalBalance(player.id, -blind);
+      }
+      queueChipPulse(player.id, blind, 'toPot', 'neutral');
     };
 
-    // Bot implementation (Synthesized logic)
-    useEffect(() => {
-        if (gameState === 'decision') {
-            const botsToAct = pokerPlayers.filter(p => p.isBot && p.ante > 0 && !p.folded && p.play === 0);
-            if (botsToAct.length > 0) {
-                const timer = setTimeout(() => {
-                    const bot = botsToAct[0];
-                    const best = getBest4CardHand(bot.cards);
-                    let choice: 'fold' | 'play1x' | 'play3x' = 'fold';
-                    if (best.rank > HandRank.Pair) choice = 'play3x';
-                    else if (best.rank === HandRank.Pair) {
-                      const val = best.cards[0].rank === 'A' ? 14 : parseInt(best.cards[0].rank || '0');
-                      if (val >= 12) choice = 'play3x';
-                      else if (val >= 4) choice = 'play1x';
-                    } else if (best.cards[0].rank === 'A' || best.cards[0].rank === 'K') {
-                      choice = 'play1x';
-                    }
-                    handleDecision(choice, bot.id);
-                }, 1000 + Math.random() * 1000);
-                return () => clearTimeout(timer);
-            }
-        }
-    }, [gameState, pokerPlayers]);
+    postBlind(smallBlindIndex, SMALL_BLIND, `SB $${SMALL_BLIND}`);
+    postBlind(bigBlindIndex, BIG_BLIND, `BB $${BIG_BLIND}`);
 
-    // Showdown logic
-    useEffect(() => {
-        if (gameState === 'showdown') {
-            const dealerBest = getBest4CardHand(dealerCards);
-            const qualifies = dealerQualifies(dealerBest);
-            
-            addEvent('Dealer reveals', dealerBest.description, qualifies ? '- Qualified' : '- Not Qualify', 'text-white/40');
-            
-            const results = pokerPlayers.map(p => {
-                if (p.ante === 0 || p.folded) return p;
-                
-                const pBest = getBest4CardHand(p.cards);
-                const pWon = compareHands(pBest, dealerBest) >= 0;
-                
-                let winnings = 0;
-                let resultText = "Lost";
+    setPokerPlayers(preparedRoster);
+    setDealerIndex(nextDealer);
+    setCurrentTurnIndex(actionIndex);
+    setCommunityCards([]);
+    setBoardRunout(runout);
+    setCurrentBet(BIG_BLIND);
+    setLastRaiseSize(BIG_BLIND);
+    setRaiseAmount(BIG_BLIND);
+    setPhase('preflop');
+    setHandMessage('Pre-flop action starts left of the big blind.');
+    addEvent('New hand', `${preparedRoster[nextDealer]?.name ?? 'Dealer'} has the button`, 'neutral');
+    addEvent('Blinds posted', `${preparedRoster[smallBlindIndex]?.name ?? 'SB'} / ${preparedRoster[bigBlindIndex]?.name ?? 'BB'}`, 'neutral');
+    audio.cardReveal();
+  }, [addEvent, audio, dealerIndex, pokerPlayers, queueChipPulse, syncExternalBalance]);
 
-                const acesUpMultiplier = getAcesUpPayout(pBest.rank, pBest.cards);
-                if (acesUpMultiplier > 0) winnings += p.acesUp * (acesUpMultiplier + 1);
-
-                if (!qualifies) {
-                  winnings += p.ante * 2;
-                  winnings += p.play;
-                  resultText = "Dealer No Qualify";
-                } else {
-                  if (pWon) {
-                    winnings += p.ante * 2;
-                    winnings += p.play * 2;
-                    resultText = "Won!";
-                  }
-                }
-                
-                const anteBonus = getAnteBonusPayout(pBest.rank);
-                if (anteBonus > 0) winnings += p.ante * anteBonus;
-
-                const roundCost = p.ante + (p.play || 0) + p.acesUp;
-                const roundProfit = winnings - roundCost;
-
-                if (!p.isBot) {
-                    setPlayers(prev => prev.map(player => player.id === p.id ? { ...player, balance: player.balance + winnings } : player));
-                    if (winnings > 0) {
-                      audio.winSound();
-                      confetti({
-                        particleCount: 150,
-                        spread: 80,
-                        origin: { y: 0.7 },
-                        colors: ['#facc15', '#22d3ee', '#ffffff', '#9333ea']
-                      });
-                      setHistory(h => [{ rank: pBest.description, amount: winnings, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), status: 'WIN' as const }, ...h].slice(0, 5));
-                      addEvent('Round Resolved', pBest.description, `+$${winnings}`, 'text-yellow-500');
-                    } else {
-                      setHistory(h => [{ rank: pBest.description, amount: -(p.ante + (p.play || 0)), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), status: 'LOSS' as const }, ...h].slice(0, 5));
-                      addEvent('Round Resolved', pBest.description, `-$${Math.abs(p.ante + (p.play || 0))}`, 'text-red-400');
-                    }
-                }
-
-                return { ...p, payout: winnings, result: resultText, handResult: pBest, sessionProfit: p.sessionProfit + roundProfit };
-            });
-
-            setPokerPlayers(results);
-            setTimeout(() => setGameState('payout'), 3000);
-        }
-    }, [gameState]);
-
-    const resetGame = () => {
-        setGameState('betting');
-        setPokerPlayers(prev => prev.map(p => ({ ...p, cards: [], ante: 0, play: 0, acesUp: 0, folded: false, result: undefined, payout: undefined, handResult: undefined })));
-        setDealerCards([]);
-    };
-
-    const mainHuman = pokerPlayers.find(p => p.id === activePlayerId);
-    const totalAction = (mainHuman?.ante || 0) + (mainHuman?.play || 0) + (mainHuman?.acesUp || 0);
-
-    const getLiveInsight = () => {
-      if (!mainHuman || mainHuman.cards.length === 0) return "Place your bets to start the duel. The Dealer needs King high to qualify.";
-      const best = getBest4CardHand(mainHuman.cards);
-      if (best.rank >= HandRank.Pair) return `You have a ${best.description}. This is a solid hand to challenge the Dealer.`;
-      if (best.cards[0].rank === 'A' || best.cards[0].rank === 'K') return "You have high cards. The Dealer might not qualify, consider playing!";
-      return "Your hand is weak. But remember, the Dealer must at least have King high to dual you.";
-    };
-
-    return (
-        <div className="fixed inset-0 flex flex-col bg-[#0b0b14] overflow-hidden text-slate-100 font-sans selection:bg-cyan-400 selection:text-black">
-            <div className="flex-1 flex overflow-hidden min-h-0">
-                {/* Main Table Area */}
-                <main className="flex-1 relative flex flex-col min-w-0 bg-[#0d0912]">
-                    {/* Felt Texture & Vignette */}
-                    <div className="absolute inset-0 z-0">
-                      <div className="absolute inset-0 bg-[#161320]" />
-                      <div className="absolute inset-0 opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/felt.png')]" />
-                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-900/10 via-transparent to-transparent" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-[#0d0912] via-transparent to-[#0d0912] opacity-80" />
-                    </div>
-
-                    <PokerBoard
-                        pokerPlayers={pokerPlayers}
-                        mainHuman={mainHuman}
-                        dealerCards={dealerCards}
-                        gameState={gameState}
-                        audio={audio}
-                        handleBet={handleBet}
-                        getLiveInsight={getLiveInsight}
-                    />
-
-                    {/* Bottom Action Footer */}
-                    <footer className="bg-[#121016]/98 backdrop-blur-2xl border-t border-white/10 flex flex-wrap lg:flex-nowrap items-center justify-between px-3 lg:px-12 z-50 relative shrink-0 shadow-[0_-20px_50px_rgba(0,0,0,0.8)] lg:h-32 py-2 lg:py-0">
-                        <div className="flex items-center gap-2 lg:gap-6 shrink-0">
-                           <button 
-                             onClick={onExit} 
-                             className="w-10 h-10 lg:w-12 lg:h-12 rounded-xl lg:rounded-2xl bg-white/5 hover:bg-red-500/20 hover:text-red-400 flex items-center justify-center transition-all group border border-white/5 hover:border-red-500/30"
-                           >
-                              <ArrowLeft size={20} className="group-hover:-translate-x-1 transition-transform" />
-                           </button>
-
-                           <div className="flex flex-col h-14 w-px bg-white/10 mx-2 hidden lg:block" />
-
-                           <div className="flex flex-col justify-center">
-                              <span className="text-[10px] text-white/30 uppercase font-black tracking-widest leading-none mb-1.5">Bankroll</span>
-                              <div className="flex items-baseline gap-1">
-                                <span className="text-xs font-black text-secondary/60">$</span>
-                                <motion.span 
-                                  key={activePlayer.balance}
-                                  initial={{ y: 10, opacity: 0 }}
-                                  animate={{ y: 0, opacity: 1 }}
-                                  className="text-lg lg:text-3xl font-black text-secondary tracking-tighter"
-                                >
-                                  {activePlayer.balance.toLocaleString()}
-                                </motion.span>
-                              </div>
-                           </div>
-
-                           <div className="hidden lg:flex flex-col justify-center">
-                             <span className="text-[10px] text-white/30 uppercase font-black tracking-widest leading-none mb-1.5">Table Bet</span>
-                             <div className="flex items-baseline gap-1">
-                               <span className="text-xs font-black text-white/40">$</span>
-                               <motion.span 
-                                 key={totalAction}
-                                 initial={{ y: 10, opacity: 0 }}
-                                 animate={{ y: 0, opacity: 1 }}
-                                 className="text-2xl lg:text-3xl font-black text-white tracking-tighter"
-                               >
-                                 {totalAction.toLocaleString()}
-                               </motion.span>
-                             </div>
-                           </div>
-                        </div>
-
-                        <div className="flex items-center justify-center gap-2 lg:gap-4 static lg:absolute left-auto lg:left-1/2 translate-x-0 lg:-translate-x-1/2 scale-[0.85] sm:scale-100 z-10 transition-transform w-full lg:w-auto order-first lg:order-none py-1 lg:py-0">
-                          <AnimatePresence mode="wait">
-                            {gameState === 'betting' ? (
-                              <motion.div 
-                                initial={{ y: 40, opacity: 0 }}
-                                animate={{ y: 0, opacity: 1 }}
-                                exit={{ y: -40, opacity: 0 }}
-                                className="flex items-center gap-3"
-                              >
-                                <motion.button 
-                                  whileHover={{ scale: 1.05 }}
-                                  whileTap={{ scale: 0.95 }}
-                                  onClick={startDeal}
-                                  className="h-11 lg:h-14 px-10 lg:px-16 bg-cyan-400 text-black rounded-lg font-black uppercase tracking-widest text-[11px] lg:text-xs transition-all shadow-[0_0_20px_rgba(34,211,238,0.2)]"
-                                >
-                                  Deal Cards
-                                </motion.button>
-                              </motion.div>
-                            ) : gameState === 'decision' ? (
-                              <motion.div 
-                                initial={{ y: 40, opacity: 0 }}
-                                animate={{ y: 0, opacity: 1 }}
-                                exit={{ y: -40, opacity: 0 }}
-                                className="flex items-center gap-3"
-                              >
-                                {mainHuman && !mainHuman.folded && mainHuman.play === 0 && (
-                                  <>
-                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('fold')} className="px-4 lg:px-12 h-11 lg:h-14 bg-[#211d27] hover:bg-[#2b2533] text-white/70 rounded-lg font-black uppercase tracking-widest text-[10px] lg:text-xs transition-colors">Fold</motion.button>
-                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('play1x')} className="px-4 lg:px-12 h-11 lg:h-14 bg-cyan-400 hover:bg-cyan-300 text-black rounded-lg font-black uppercase tracking-widest text-[10px] lg:text-xs shadow-md transition-colors">Play (1x)</motion.button>
-                                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleDecision('play3x')} className="px-4 lg:px-12 h-11 lg:h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-lg font-black uppercase tracking-widest text-[10px] lg:text-xs shadow-md transition-colors">Play (3x)</motion.button>
-                                  </>
-                                )}
-                              </motion.div>
-                            ) : gameState === 'payout' ? (
-                               <motion.button 
-                                 initial={{ scale: 0.5, opacity: 0 }}
-                                 animate={{ scale: 1, opacity: 1 }}
-                                 whileHover={{ scale: 1.05 }}
-                                 whileTap={{ scale: 0.95 }}
-                                 onClick={resetGame}
-                                 className="h-11 lg:h-14 px-10 lg:px-16 bg-yellow-500 text-black rounded-lg font-black uppercase tracking-widest text-[11px] lg:text-xs transition-colors shadow-lg"
-                               >
-                                 Next Hand
-                               </motion.button>
-                            ) : null}
-                          </AnimatePresence>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 lg:gap-3">
-                          <button onClick={clearBets} className="w-8 h-8 lg:w-10 lg:h-10 rounded-lg lg:rounded-xl mr-1 lg:mr-2 text-white/30 hover:text-white/60 transition-colors flex items-center justify-center">
-                              <RotateCcw size={14} />
-                          </button>
-                          {CHIPS.map(c => (
-                            <motion.button 
-                              key={c}
-                              whileHover={{ scale: 1.1, y: -2 }}
-                              whileTap={{ scale: 0.9 }}
-                              onClick={() => setSelectedChip(c)}
-                              className={cn(
-                                "w-9 h-9 lg:w-14 lg:h-14 rounded-xl lg:rounded-2xl border flex items-center justify-center font-black transition-all transform",
-                                CHIP_COLORS[c as keyof typeof CHIP_COLORS],
-                                selectedChip === c ? "scale-110 ring-2 ring-white/10 z-10" : "opacity-60"
-                              )}
-                            >
-                              <span className="text-[10px] lg:text-xs font-bold drop-shadow-sm select-none">{c}</span>
-                            </motion.button>
-                          ))}
-                        </div>
-                    </footer>
-                </main>
-
-                {/* Right Host Sidebar */}
-                <aside className="w-[340px] border-l border-[#1f1a27] bg-[#121016] flex flex-col hidden xl:flex relative z-50 overflow-hidden">
-                    <div className="h-[380px] relative shrink-0">
-                       <img 
-                          src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/akeno_sidebar.jpg" 
-                          onError={(e) => { e.currentTarget.src = "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/akeno_poker_vip.jpg" }}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                       />
-                       {/* Ethereal Gradient Overlay */}
-                       <div className="absolute inset-0 bg-gradient-to-t from-[#121016] via-[#121016]/20 to-transparent" />
-                       <div className="absolute inset-0 bg-gradient-to-r from-[#121016]/40 via-transparent to-transparent" />
-                       
-                       <div className="absolute bottom-6 left-6 right-6">
-                         <div className="bg-[#4b1d7d] text-white w-fit px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest mb-2 shadow-lg border border-[#6d28d9]/30">Elite VIP Hostess</div>
-                         <h3 className="text-4xl font-black tracking-tighter leading-[0.85] text-white drop-shadow-2xl">Akeno<br/><span className="text-[#a78bfa]">Himejima</span></h3>
-                         <div className="flex items-center gap-2 mt-4 text-[9px] font-black uppercase tracking-widest text-[#22d3ee]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,1)] animate-pulse" />
-                            Currently Attending You
-                         </div>
-                       </div>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto no-scrollbar pb-6 px-6 relative">
-                      {/* Game Track */}
-                      <div className="mt-6 space-y-4">
-                         <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-[#22d3ee]">Game Track</span>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/30">Session Live</span>
-                         </div>
-                         <div className="space-y-4 relative before:absolute before:inset-0 before:ml-12 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-white/5 before:to-transparent">
-                            {events.map((evt, j) => (
-                              <motion.div 
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                key={j} 
-                                className="relative flex items-center justify-between group"
-                              >
-                                 <span className="text-[10px] font-mono text-white/30 w-10 shrink-0">{evt.time}</span>
-                                 <div className={cn(
-                                    "w-1.5 h-1.5 rounded-full shrink-0 z-10 mx-4 transition-all duration-300",
-                                    j === 0 ? "bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,1)]" : "bg-white/20"
-                                 )} />
-                                 <div className="flex-1 text-[11px] text-white/70">
-                                     <span className={cn(evt.muted ? "opacity-60" : "font-medium")}>
-                                        {evt.label} {evt.amount && <strong className={cn("font-black", evt.color)}>{evt.amount}</strong>} {evt.context}
-                                     </span>
-                                 </div>
-                              </motion.div>
-                            ))}
-                         </div>
-                      </div>
-
-                      {/* Betting History */}
-                      <div className="mt-10 space-y-4">
-                         <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-white/50">Betting History</span>
-                            <span className="text-[9px] font-bold uppercase tracking-wider text-white/30 cursor-pointer hover:text-white transition-colors">View All</span>
-                         </div>
-                         
-                         <div className="space-y-3">
-                            {history.map((h, i) => (
-                                <motion.div 
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    key={i} 
-                                    className="rounded-xl border border-white/5 bg-white/[0.02] p-4 flex items-center justify-between transition-colors hover:bg-white/[0.04]"
-                                >
-                                    <div className="flex items-center gap-4">
-                                        <div className={cn(
-                                            "w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-lg",
-                                            h.status === 'WIN' ? "border-yellow-500/30 bg-yellow-500/10" : 
-                                            h.status === 'LOSS' ? "border-red-500/20 bg-red-500/5" : "border-white/10 bg-white/5"
-                                        )}>
-                                            {h.status === 'WIN' ? <Award size={18} className="text-yellow-500" /> : 
-                                             h.status === 'LOSS' ? <X size={18} className="text-red-400" /> : 
-                                             <Flag size={18} className="text-white/40" />}
-                                        </div>
-                                        <div className="flex flex-col gap-0.5">
-                                            <span className="text-sm font-black text-white/90 tracking-tight">{h.rank}</span>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-[9px] text-white/30 font-black uppercase tracking-widest whitespace-nowrap">BET: ${Math.abs(h.amount)}</span>
-                                                <span className={cn("text-[9px] font-black uppercase tracking-widest", h.status === 'WIN' ? "text-yellow-500" : (h.status === 'LOSS' ? "text-red-400" : "text-white/30"))}>{h.status}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <span className={cn("font-black text-base tracking-tighter", h.status === 'WIN' ? "text-yellow-500" : "text-white/60")}>
-                                        {h.status === 'WIN' ? '+' : '-'}${Math.abs(h.amount).toLocaleString()}
-                                    </span>
-                                </motion.div>
-                            ))}
-                         </div>
-                      </div>
-                    </div>
-
-                    <div className="p-6 border-t border-white/5 bg-[#0d0a10] flex items-center gap-4 shrink-0">
-                       <div className="flex items-center gap-2">
-                          <img 
-                            src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/images/akeno_poker_vip.jpg" 
-                            className="w-10 h-10 rounded-xl object-cover border border-[#4b1d7d]/50" 
-                          />
-                          <div className="w-8 h-8 rounded-lg bg-[#4b1d7d] flex items-center justify-center shadow-lg shadow-purple-900/20">
-                             <Zap size={14} className="text-white fill-white" />
-                          </div>
-                       </div>
-                       <p className="text-[10px] text-white/40 italic flex-1 leading-tight font-medium">"Every hand is a lesson in destiny. Play with precision."</p>
-                    </div>
-                </aside>
-            </div>
-        </div>
+  const resetForNextHand = useCallback(() => {
+    setPokerPlayers((previous) =>
+      previous.map((player) => ({
+        ...player,
+        cards: [],
+        currentBet: 0,
+        totalContribution: 0,
+        actedThisStreet: false,
+        lastAction: undefined,
+        winnings: 0,
+        handResult: undefined,
+        status: player.stack > 0 ? 'active' : 'out'
+      }))
     );
+    setCommunityCards([]);
+    setBoardRunout([]);
+    setCurrentBet(0);
+    setCurrentTurnIndex(-1);
+    setPhase('idle');
+    setRaiseAmount(BIG_BLIND);
+    setHandMessage('Hand complete. Start the next round when you are ready.');
+  }, []);
+
+  useEffect(() => {
+    if (!currentTurnPlayer || !currentTurnPlayer.isBot) return;
+    if (!['preflop', 'flop', 'turn', 'river'].includes(phase)) return;
+
+    const timer = window.setTimeout(() => {
+      const toCall = Math.max(0, currentBet - currentTurnPlayer.currentBet);
+      const stack = currentTurnPlayer.stack;
+
+      if (stack <= 0) {
+        applyAction(currentTurnPlayer.id, 'check');
+        return;
+      }
+
+      if (communityCards.length === 0) {
+        const strength = getHoleCardStrength(currentTurnPlayer.cards);
+        if (toCall === 0) {
+          if (strength >= 30 && stack > BIG_BLIND * 2) {
+            applyAction(currentTurnPlayer.id, 'raise');
+          } else {
+            applyAction(currentTurnPlayer.id, 'check');
+          }
+          return;
+        }
+        if (strength < 17 && toCall > BIG_BLIND) {
+          applyAction(currentTurnPlayer.id, 'fold');
+          return;
+        }
+        if (strength >= 32 && stack <= toCall + BIG_BLIND * 2) {
+          applyAction(currentTurnPlayer.id, 'all-in');
+          return;
+        }
+        if (strength >= 26 && stack > toCall + BIG_BLIND) {
+          applyAction(currentTurnPlayer.id, 'raise');
+          return;
+        }
+        if (strength >= 16 || toCall <= BIG_BLIND) {
+          applyAction(currentTurnPlayer.id, 'call');
+          return;
+        }
+        applyAction(currentTurnPlayer.id, 'fold');
+        return;
+      }
+
+      const best = getBestHand([...currentTurnPlayer.cards, ...communityCards]);
+      if (toCall === 0) {
+        if (best.rank >= HandRank.TwoPair && stack > BIG_BLIND) {
+          applyAction(currentTurnPlayer.id, 'raise');
+        } else {
+          applyAction(currentTurnPlayer.id, 'check');
+        }
+        return;
+      }
+      if (best.rank >= HandRank.Straight && stack <= toCall + BIG_BLIND) {
+        applyAction(currentTurnPlayer.id, 'all-in');
+        return;
+      }
+      if (best.rank >= HandRank.TwoPair && stack > toCall + BIG_BLIND) {
+        applyAction(currentTurnPlayer.id, 'raise');
+        return;
+      }
+      if (best.rank >= HandRank.Pair || toCall <= BIG_BLIND) {
+        applyAction(currentTurnPlayer.id, 'call');
+        return;
+      }
+      applyAction(currentTurnPlayer.id, 'fold');
+    }, 850 + Math.random() * 500);
+
+    return () => window.clearTimeout(timer);
+  }, [applyAction, communityCards, currentBet, currentTurnPlayer, phase]);
+
+  const humanToCall = mainHuman ? Math.max(0, currentBet - mainHuman.currentBet) : 0;
+  const humanCanAct =
+    Boolean(mainHuman) &&
+    currentTurnPlayer?.id === mainHuman?.id &&
+    ['preflop', 'flop', 'turn', 'river'].includes(phase) &&
+    mainHuman.status === 'active';
+  const minimumRaise = currentBet === 0 ? BIG_BLIND : Math.max(lastRaiseSize, BIG_BLIND);
+  const maxRaiseAmount = mainHuman ? Math.max(BIG_BLIND, mainHuman.stack - humanToCall) : BIG_BLIND;
+  const sliderMin = Math.min(minimumRaise, maxRaiseAmount);
+  const sliderMax = Math.max(minimumRaise, maxRaiseAmount);
+  const clampedRaiseAmount = Math.min(Math.max(raiseAmount, sliderMin), sliderMax);
+
+  useEffect(() => {
+    setRaiseAmount((previous) => {
+      const next = Math.min(Math.max(previous, sliderMin), sliderMax);
+      return next === previous ? previous : next;
+    });
+  }, [sliderMin, sliderMax]);
+
+  return (
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a0c12] text-slate-100 selection:bg-cyan-400 selection:text-black">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.08),transparent_30%),radial-gradient(circle_at_bottom,_rgba(250,204,21,0.08),transparent_30%)]" />
+
+      <div className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <PokerBoard
+            pokerPlayers={pokerPlayers}
+            mainHuman={mainHuman}
+            communityCards={communityCards}
+            dealerIndex={dealerIndex}
+            currentTurnId={currentTurnPlayer?.id}
+            currentBet={currentBet}
+            totalPot={totalPot}
+            streetLabel={streetLabel}
+            phaseLabel={phaseLabel}
+            handMessage={getLiveInsight()}
+            revealAllCards={revealAllCards}
+            chipPulse={chipPulse}
+          />
+
+          <footer className="relative z-20 border-t border-white/10 bg-[#121016]/95 px-3 py-1.5 backdrop-blur-xl lg:px-5 lg:py-2">
+            <div className="flex flex-col gap-2 lg:grid lg:grid-cols-[auto_minmax(240px,320px)_auto] lg:items-center lg:gap-3">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 lg:gap-3">
+                <button
+                  onClick={onExit}
+                  className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/70 transition hover:border-red-400/35 hover:bg-red-500/10 hover:text-red-300"
+                >
+                  <ArrowLeft size={15} />
+                </button>
+
+                <div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.3em] text-white/35">Bankroll</div>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.div
+                      key={activeProfile?.balance ?? 0}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.2 }}
+                      className="mt-0.5 text-lg font-black tracking-tight text-cyan-300 lg:text-xl"
+                    >
+                      ${activeProfile?.balance.toLocaleString() ?? '0'}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+
+                <div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.3em] text-white/35">Current Turn</div>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.div
+                      key={currentTurnPlayer?.id ?? 'waiting'}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.2 }}
+                      className="mt-0.5 text-sm font-black tracking-tight text-white lg:text-base"
+                    >
+                      {currentTurnPlayer?.name ?? 'Waiting'}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+
+                <div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.3em] text-white/35">Seat Role</div>
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.div
+                      key={mainHuman ? getSeatRole(pokerPlayers.findIndex((player) => player.id === mainHuman.id), pokerPlayers) : 'Observer'}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.2 }}
+                      className="mt-0.5 text-sm font-black tracking-tight text-yellow-400 lg:text-base"
+                    >
+                      {mainHuman ? getSeatRole(pokerPlayers.findIndex((player) => player.id === mainHuman.id), pokerPlayers) : 'Observer'}
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+              </div>
+
+              <div className="mx-auto flex w-full min-w-[240px] max-w-[320px] items-center gap-2 rounded-3xl border border-white/10 bg-white/[0.04] px-3 py-2 lg:mx-2">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-yellow-500/30 bg-yellow-500/10 text-yellow-300">
+                  <Target size={14} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[9px] font-black uppercase tracking-[0.3em] text-white/35">
+                        {currentBet === 0 ? 'Bet Size' : 'Raise By'}
+                      </div>
+                      <div className="mt-0.5 w-20 text-right text-sm font-black tracking-tight tabular-nums text-white lg:text-base">
+                        +${clampedRaiseAmount.toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="text-right text-[9px] font-black uppercase tracking-[0.2em] text-white/35">
+                      <div>Min ${minimumRaise}</div>
+                      <div>Max ${maxRaiseAmount.toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min={sliderMin}
+                    max={sliderMax}
+                    step={1}
+                    value={clampedRaiseAmount}
+                    onChange={(event) => setRaiseAmount(Number(event.target.value))}
+                    className="mt-2 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-cyan-400"
+                    disabled={!mainHuman || mainHuman.stack <= 0 || phase === 'idle' || phase === 'payout'}
+                  />
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5 lg:justify-end">
+                {phase === 'idle' || phase === 'payout' ? (
+                  <>
+                    {phase === 'payout' && (
+                      <button
+                        onClick={resetForNextHand}
+                        className="inline-flex h-9 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-white/70 transition hover:bg-white/10"
+                      >
+                        <RotateCcw size={13} />
+                        Reset Table
+                      </button>
+                    )}
+                    <button
+                      onClick={startHand}
+                      className="inline-flex h-9 items-center gap-2 rounded-2xl bg-cyan-400 px-4 text-[10px] font-black uppercase tracking-[0.16em] text-black shadow-[0_0_24px_rgba(34,211,238,0.25)] transition hover:bg-cyan-300"
+                    >
+                      <Zap size={13} />
+                      {phase === 'idle' ? 'Deal New Hand' : 'Next Hand'}
+                    </button>
+                  </>
+                ) : (
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={`${phase}-${humanCanAct}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="flex flex-wrap items-center gap-1.5 lg:justify-end"
+                    >
+                      {humanCanAct ? (
+                        <>
+                          <button
+                            onClick={() => applyAction(activePlayerId, 'fold')}
+                            className="h-9 rounded-2xl border border-white/10 bg-white/5 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-white/70 transition hover:bg-white/10"
+                          >
+                            Fold
+                          </button>
+                          {humanToCall === 0 ? (
+                            <button
+                              onClick={() => applyAction(activePlayerId, 'check')}
+                              className="h-9 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-emerald-300 transition hover:bg-emerald-500/15"
+                            >
+                              Check
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => applyAction(activePlayerId, 'call')}
+                              className="h-9 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-cyan-200 transition hover:bg-cyan-500/15"
+                            >
+                              Call ${humanToCall}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => applyAction(activePlayerId, 'raise', clampedRaiseAmount)}
+                            disabled={!mainHuman || mainHuman.stack <= humanToCall}
+                            className="h-9 rounded-2xl border border-yellow-500/30 bg-yellow-500/10 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-yellow-300 transition hover:bg-yellow-500/15 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {currentBet === 0 ? `Bet +$${clampedRaiseAmount}` : `Raise +$${clampedRaiseAmount}`}
+                          </button>
+                          <button
+                            onClick={() => applyAction(activePlayerId, 'all-in')}
+                            className="h-9 rounded-2xl bg-yellow-500 px-3 text-[10px] font-black uppercase tracking-[0.16em] text-black transition hover:bg-yellow-400"
+                          >
+                            All-in
+                          </button>
+                        </>
+                      ) : (
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] text-white/55">
+                          {phase === 'showdown' ? 'Hands Comparison' : 'Bots Acting'}
+                        </div>
+                      )}
+                    </motion.div>
+                  </AnimatePresence>
+                )}
+              </div>
+            </div>
+          </footer>
+        </main>
+
+        <aside className="hidden w-[280px] shrink-0 border-l border-white/10 bg-[#121016]/95 xl:flex xl:flex-col">
+          <div className="border-b border-white/10 p-5">
+            <div className="inline-flex items-center gap-2 rounded-full border border-yellow-500/25 bg-yellow-500/10 px-3 py-1 text-[9px] font-black uppercase tracking-[0.28em] text-yellow-400">
+              <ShieldCheck size={11} />
+              Hold&apos;em Rules
+            </div>
+            <div className="mt-2 text-lg font-black tracking-tight text-white">Table Control</div>
+            <p className="mt-1 text-[12px] text-white/50">
+              Dealer rotates each hand, blinds are 25/50, and pots are split through main-pot then side-pot resolution.
+            </p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-3.5">
+              <div className="text-[8px] font-black uppercase tracking-[0.3em] text-white/35">Round State</div>
+              <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+                <div className="rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5">
+                  <div className="text-[9px] uppercase tracking-[0.18em] text-white/35">Phase</div>
+                  <div className="mt-1 text-base font-black text-cyan-300">{streetLabel}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5">
+                  <div className="text-[9px] uppercase tracking-[0.18em] text-white/35">Min Raise</div>
+                  <div className="mt-1 text-base font-black text-yellow-400">${minimumRaise}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5">
+                  <div className="text-[9px] uppercase tracking-[0.18em] text-white/35">To Call</div>
+                  <div className="mt-1 text-base font-black text-white">${humanToCall}</div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5">
+                  <div className="text-[9px] uppercase tracking-[0.18em] text-white/35">Eligible Seats</div>
+                  <div className="mt-1 text-base font-black text-white">{pokerPlayers.filter((player) => player.status !== 'out').length}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.03] p-3.5">
+              <div className="flex items-center gap-2 text-[8px] font-black uppercase tracking-[0.3em] text-white/35">
+                <Target size={10} />
+                Action Feed
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {events.length > 0 ? (
+                  <AnimatePresence initial={false}>
+                    {events.map((event, index) => (
+                      <motion.div
+                        key={`${event.time}-${index}`}
+                        layout
+                        initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                        transition={{ duration: 0.22, ease: 'easeOut' }}
+                        className="flex gap-2.5"
+                      >
+                        <div className="pt-0.5 text-[9px] font-mono text-white/30">{event.time}</div>
+                        <div className="flex-1">
+                          <div
+                            className={cn(
+                              'text-[13px] font-semibold',
+                              event.tone === 'good' ? 'text-yellow-300' : event.tone === 'bad' ? 'text-red-300' : 'text-white/80'
+                            )}
+                          >
+                            {event.label}
+                          </div>
+                           <div className="text-[11px] text-white/45">{event.detail}</div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                ) : (
+                  <div className="text-[13px] text-white/45">No hands played yet.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.03] p-3.5">
+              <div className="flex items-center gap-2 text-[8px] font-black uppercase tracking-[0.3em] text-white/35">
+                <Trophy size={10} />
+                Recent Results
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {history.length > 0 ? (
+                  <AnimatePresence initial={false}>
+                    {history.map((entry, index) => (
+                      <motion.div
+                        key={`${entry.time}-${index}`}
+                        layout
+                        initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -8, scale: 0.98 }}
+                        transition={{ duration: 0.22, ease: 'easeOut' }}
+                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5"
+                      >
+                        <div>
+                          <div className="text-[13px] font-black text-white">{entry.result}</div>
+                          <div className="text-[9px] uppercase tracking-[0.18em] text-white/35">{entry.time}</div>
+                        </div>
+                        <div className={cn('text-base font-black', entry.tone === 'good' ? 'text-yellow-400' : entry.tone === 'bad' ? 'text-red-300' : 'text-white')}>
+                          {entry.amount > 0 ? '+' : ''}${Math.abs(entry.amount)}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                ) : (
+                  <div className="text-[13px] text-white/45">Showdown summaries will land here.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.03] p-3.5">
+              <div className="flex items-center gap-2 text-[8px] font-black uppercase tracking-[0.3em] text-white/35">
+                <Wallet size={10} />
+                Stacks
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {pokerPlayers.map((player) => (
+                  <div key={player.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/15 px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      {dealerIndex >= 0 && pokerPlayers[dealerIndex]?.id === player.id ? (
+                        <Crown size={12} className="text-yellow-400" />
+                      ) : player.status === 'folded' ? (
+                        <Flag size={12} className="text-white/40" />
+                      ) : (
+                        <Zap size={12} className="text-cyan-300" />
+                      )}
+                      <span className="font-black text-white">{player.name}</span>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-black text-white">${player.stack.toLocaleString()}</div>
+                      <div className="text-[10px] uppercase tracking-[0.2em] text-white/35">{player.status}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
 };
