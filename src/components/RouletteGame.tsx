@@ -418,6 +418,18 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
         ctx.restore();
     };
 
+    const safeNormalize = (x: number, y: number, fallbackAngle: number) => {
+        const len = Math.hypot(x, y);
+        if (len > 1e-4) {
+            return { x: x / len, y: y / len };
+        }
+
+        return {
+            x: Math.cos(fallbackAngle),
+            y: Math.sin(fallbackAngle)
+        };
+    };
+
     const loop = (time: number) => {
         if (!lastTime) lastTime = time;
         // Limit delta time to catch nasty lag spikes (max 0.1s step)
@@ -505,8 +517,7 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
 
             // Outer boundary collision (keep ball in track)
             if (dist > maxRadius - 10) {
-                const nx = st.ball.x / dist;
-                const ny = st.ball.y / dist;
+                const { x: nx, y: ny } = safeNormalize(st.ball.x, st.ball.y, Math.atan2(st.ball.vy, st.ball.vx));
                 st.ball.x = nx * (maxRadius - 10);
                 st.ball.y = ny * (maxRadius - 10);
                 
@@ -517,17 +528,35 @@ const CanvasRoulette = ({ isSpinning, onResult, spinTrigger }: { isSpinning: boo
             }
 
             // Hub boundary collision (prevent passing through center)
+            // Use a soft exclusion ring so the ball does not oscillate on the exact boundary.
             const hubR = maxRadius * 0.38;
-            if (dist < hubR) {
-                const nx = st.ball.x / dist;
-                const ny = st.ball.y / dist;
-                st.ball.x = nx * hubR;
-                st.ball.y = ny * hubR;
-                
-                const dot = (st.ball.vx * nx + st.ball.vy * ny);
-                audio.playWallHit(speed);
-                st.ball.vx -= 1.8 * dot * nx; // Bounce off the center hub
-                st.ball.vy -= 1.8 * dot * ny;
+            const hubBuffer = 6;
+            if (dist < hubR + hubBuffer) {
+                const fallbackAngle = Math.atan2(st.ball.vy, st.ball.vx) || st.wheelAngle;
+                const { x: nx, y: ny } = safeNormalize(st.ball.x, st.ball.y, fallbackAngle);
+                const tx = -ny;
+                const ty = nx;
+                const targetR = hubR + hubBuffer;
+
+                st.ball.x = nx * targetR;
+                st.ball.y = ny * targetR;
+
+                const inwardSpeed = -(st.ball.vx * nx + st.ball.vy * ny);
+                const tangentialSpeed = st.ball.vx * tx + st.ball.vy * ty;
+
+                if (inwardSpeed > 0.01) {
+                    audio.playWallHit(speed);
+                    // Reflect only the inward component, then keep a little tangential motion.
+                    st.ball.vx += inwardSpeed * nx * 1.85;
+                    st.ball.vy += inwardSpeed * ny * 1.85;
+                    st.ball.vx += tx * (0.45 + Math.random() * 0.2);
+                    st.ball.vy += ty * (0.45 + Math.random() * 0.2);
+                } else if (Math.abs(tangentialSpeed) < 0.2) {
+                    // If the ball stalls right on the hub, kick it out and sideways a touch.
+                    const push = 2.8;
+                    st.ball.vx += nx * push + tx * 0.4;
+                    st.ball.vy += ny * push + ty * 0.4;
+                }
             }
 
             // Enter pockets area (settling mechanism)

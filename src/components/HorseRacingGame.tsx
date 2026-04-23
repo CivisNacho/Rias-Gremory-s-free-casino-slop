@@ -520,18 +520,7 @@ export const HorseRacingGame = ({ players, activePlayerId, setPlayers, onExit }:
                     <span className="w-6 text-[16px] font-black tracking-tight text-[#d6dae6]/90">{idx + 1}</span>
                     <span className="w-1 h-5 rounded-full mx-2" style={{ backgroundColor: HORSE_SWATCHES[horse.id % HORSE_SWATCHES.length] }} />
                     <span className="text-[12px] leading-none font-black tracking-[0.02em] text-[#f3f5ff] truncate pr-2">{horse.name}</span>
-                    <motion.span
-                      key={`${horse.id}-${delta}`}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: delta === 0 ? 0.55 : 1, y: 0 }}
-                      transition={{ duration: 0.28 }}
-                      className={cn(
-                        'ml-auto text-[10px] font-black tracking-wider',
-                        delta > 0 ? 'text-[#54f0aa]' : delta < 0 ? 'text-[#ff8f93]' : 'text-[#9ea6bf]'
-                      )}
-                    >
-                      {delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : `#${horse.id + 1}`}
-                    </motion.span>
+                    <span className="ml-auto text-[10px] font-black tracking-wider text-[#9ea6bf]">#{horse.id + 1}</span>
                   </motion.div>
                 ))
               ) : (
