@@ -1,21 +1,26 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Trophy, 
-  Play, 
-  CircleDollarSign, 
-  X,
-  AlertCircle,
-  Zap,
-  Plus,
-  Minus
-} from 'lucide-react';
+import { Trophy, Play, CircleDollarSign, X, AlertCircle, Plus, Minus } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { RoulettePlayer } from '../lib/rouletteUtils';
-import { HorseRacingEngine, Horse } from './HorseRacingEngine';
+import { HorseRacingEngine, Horse, RaceUpdatePayload } from './HorseRacingEngine';
 
-const HORSE_IMAGE_URL = "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/gif/horse_gif_loop.gif";
-const DIRT_TEXTURE_URL = "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/horse_race/textures/dirt_diff_1k.jpg";
+const HORSE_IMAGE_URL = 'https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/gif/horse_gif_loop.gif';
+const HORSES_COUNT = 10;
+const HORSE_SWATCHES = [
+  '#f8d568',
+  '#b7e08c',
+  '#9ac7ff',
+  '#ffc9a6',
+  '#cab6ff',
+  '#8fe5cf',
+  '#f6a5d5',
+  '#a7f0ff',
+  '#ffd98f',
+  '#deb8ff'
+];
+
+const clamp = (min: number, max: number, value: number) => Math.max(min, Math.min(max, value));
 
 interface HorseRacingGameProps {
   players: RoulettePlayer[];
@@ -27,14 +32,20 @@ interface HorseRacingGameProps {
 interface Bet {
   horseId: number;
   amount: number;
+  decimalOdds: number;
 }
 
-export const HorseRacingGame = ({ 
-  players, 
-  activePlayerId, 
-  setPlayers, 
-  onExit 
-}: HorseRacingGameProps) => {
+type HorseTier = 'Favorite' | 'Contender' | 'Midfield' | 'Longshot';
+
+interface HorseMarket {
+  horseId: number;
+  tier: HorseTier;
+  strength: number;
+  probability: number;
+  decimalOdds: number;
+}
+
+export const HorseRacingGame = ({ players, activePlayerId, setPlayers, onExit }: HorseRacingGameProps) => {
   const [isRacing, setIsRacing] = useState(false);
   const [bets, setBets] = useState<Bet[]>([]);
   const [selectedHorseId, setSelectedHorseId] = useState<number | null>(null);
@@ -44,12 +55,12 @@ export const HorseRacingGame = ({
   const [history, setHistory] = useState<number[]>([]);
   const [showResult, setShowResult] = useState(false);
   const [winningPayout, setWinningPayout] = useState<number>(0);
-  
+
   const [liveHorses, setLiveHorses] = useState<Horse[]>([]);
-  const [raceProgress, setRaceProgress] = useState(0);
-  
-  // Use refs for values needed in callbacks that are passed to the engine
-  // to avoid stale closures and unnecessary re-renders of the engine
+  const [standings, setStandings] = useState<number[]>([]);
+  const [positionDelta, setPositionDelta] = useState<Record<number, number>>({});
+  const [horseMarket, setHorseMarket] = useState<HorseMarket[]>([]);
+
   const betsRef = useRef(bets);
   const activePlayerIdRef = useRef(activePlayerId);
 
@@ -61,423 +72,475 @@ export const HorseRacingGame = ({
     activePlayerIdRef.current = activePlayerId;
   }, [activePlayerId]);
 
-  const activePlayer = useMemo(() => 
-    players.find(p => p.id === activePlayerId) || players[0],
-    [players, activePlayerId]
-  );
+  const activePlayer = useMemo(() => players.find((p) => p.id === activePlayerId) || players[0], [players, activePlayerId]);
+
+  useEffect(() => {
+    const base = Array.from({ length: HORSES_COUNT }).map((_, i) => {
+      if (i < 2) return 1.16 + Math.random() * 0.05;
+      if (i < 5) return 1.03 + Math.random() * 0.08;
+      if (i < 8) return 0.93 + Math.random() * 0.08;
+      return 0.79 + Math.random() * 0.08;
+    });
+
+    const temp = 4.8;
+    const exp = base.map((score) => Math.exp(score * temp));
+    const totalExp = exp.reduce((sum, value) => sum + value, 0);
+    const houseMargin = 1.09;
+
+    const nextMarket: HorseMarket[] = base.map((strength, horseId) => {
+      const probability = exp[horseId] / totalExp;
+      const decimalOdds = clamp(1.35, 18, (1 / probability) * houseMargin);
+      const tier: HorseTier =
+        probability >= 0.17 ? 'Favorite' : probability >= 0.11 ? 'Contender' : probability >= 0.075 ? 'Midfield' : 'Longshot';
+
+      return { horseId, tier, strength, probability, decimalOdds };
+    });
+
+    setHorseMarket(nextMarket);
+  }, []);
+
+  const marketByHorseId = useMemo(() => new Map(horseMarket.map((entry) => [entry.horseId, entry])), [horseMarket]);
+  const horseStrengths = useMemo(() => horseMarket.map((entry) => entry.strength), [horseMarket]);
 
   const placeBet = () => {
     if (selectedHorseId === null || isRacing) return;
     if (activePlayer.balance < betAmount) return;
+    const market = marketByHorseId.get(selectedHorseId);
+    if (!market) return;
 
-    setBets([{ horseId: selectedHorseId, amount: betAmount }]);
-    
-    // Deduct balance immediately
-    setPlayers(prev => prev.map(p => 
-      p.id === activePlayerId 
-        ? { ...p, balance: p.balance - betAmount } 
-        : p
-    ));
+    setBets([{ horseId: selectedHorseId, amount: betAmount, decimalOdds: market.decimalOdds }]);
+
+    setPlayers((prev) =>
+      prev.map((p) =>
+        p.id === activePlayerId
+          ? {
+              ...p,
+              balance: p.balance - betAmount
+            }
+          : p
+      )
+    );
   };
 
-  const handleRaceFinish = useCallback((winnerId: number) => {
-    setIsRacing(false);
-    setLastWinner(winnerId);
-    setHistory(prev => [winnerId, ...prev].slice(0, 10));
-    setShowResult(true);
+  const handleRaceFinish = useCallback(
+    (winnerId: number) => {
+      setIsRacing(false);
+      setLastWinner(winnerId);
+      setHistory((prev) => [winnerId, ...prev].slice(0, 10));
+      setShowResult(true);
 
-    // Calculate winnings using ref to avoid stale closure
-    const currentBets = betsRef.current;
-    const winningBet = currentBets.find(b => b.horseId === winnerId);
-    
-    if (winningBet) {
-      const payout = winningBet.amount * 6; // 6x multiplier for 6 horses
-      setWinningPayout(payout);
-      setPlayers(prev => prev.map(p => 
-        p.id === activePlayerIdRef.current 
-          ? { ...p, balance: p.balance + payout } 
-          : p
-      ));
-    } else {
-      setWinningPayout(0);
-    }
-    
-    setBets([]);
-  }, [setPlayers]);
+      const currentBets = betsRef.current;
+      const winningBet = currentBets.find((b) => b.horseId === winnerId);
 
-  const handleRaceUpdate = useCallback((horses: Horse[], progress: number) => {
-    setLiveHorses(horses);
-    setRaceProgress(progress);
+      if (winningBet) {
+        const payout = Math.round(winningBet.amount * winningBet.decimalOdds);
+        setWinningPayout(payout);
+        setPlayers((prev) =>
+          prev.map((p) =>
+            p.id === activePlayerIdRef.current
+              ? {
+                  ...p,
+                  balance: p.balance + payout
+                }
+              : p
+          )
+        );
+      } else {
+        setWinningPayout(0);
+      }
+
+      setBets([]);
+    },
+    [setPlayers]
+  );
+
+  const handleRaceUpdate = useCallback((payload: RaceUpdatePayload) => {
+    setLiveHorses(payload.horses);
+    setStandings(payload.standings);
   }, []);
 
   const startRace = () => {
     if (bets.length === 0) return;
     setLiveHorses([]);
-    setRaceProgress(0);
     setWinningPayout(0);
+    setStandings([]);
+    setPositionDelta({});
     setIsRacing(true);
     setShowResult(false);
     setLastWinner(null);
   };
 
-  // Derive sorted horses for the live standings
-  const sortedHorses = [...liveHorses].sort((a, b) => b.position - a.position);
+  const sortedHorses = useMemo(() => {
+    if (standings.length === 0) {
+      return [...liveHorses].sort((a, b) => b.position - a.position);
+    }
+
+    const byId = new Map(liveHorses.map((horse) => [horse.id, horse]));
+    return standings.map((id) => byId.get(id)).filter(Boolean) as Horse[];
+  }, [liveHorses, standings]);
+
+  const previousStandingsRef = useRef<number[]>([]);
+  useEffect(() => {
+    if (standings.length === 0) {
+      previousStandingsRef.current = [];
+      return;
+    }
+    const prev = previousStandingsRef.current;
+    const delta: Record<number, number> = {};
+    standings.forEach((horseId, idx) => {
+      const prevIdx = prev.indexOf(horseId);
+      delta[horseId] = prevIdx === -1 ? 0 : prevIdx - idx;
+    });
+    setPositionDelta(delta);
+    previousStandingsRef.current = standings;
+  }, [standings]);
+
+  const f1Standings = useMemo(
+    () =>
+      sortedHorses.slice(0, HORSES_COUNT).map((horse, idx) => ({ horse, idx, delta: positionDelta[horse.id] || 0 })),
+    [sortedHorses, positionDelta]
+  );
+
+  const sortedByOdds = useMemo(() => [...horseMarket].sort((a, b) => a.decimalOdds - b.decimalOdds), [horseMarket]);
 
   return (
-    <div className="flex flex-col h-full bg-surface-container overflow-hidden">
-      {/* Game Header */}
-      <div className="flex-none flex items-center justify-between px-8 py-4 bg-surface/40 backdrop-blur-md border-b border-outline-variant/5">
+    <div className="flex flex-col h-full overflow-hidden bg-gradient-to-b from-[#132619] via-[#0f1912] to-[#090d09] text-[#f2ebd7]">
+      <div className="flex-none flex items-center justify-between px-4 py-3 sm:px-8 sm:py-4 bg-gradient-to-r from-[#431f1d] via-[#5b2a27] to-[#3b1817] border-b border-[#b68a39]/35 shadow-[0_14px_32px_rgba(0,0,0,0.35)]">
         <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-secondary/10 border border-secondary/20 overflow-hidden flex items-center justify-center">
-            <img 
-              src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/heads/main/images/horse_race_icon.jpg" 
-              alt="VIP Horse Derby Icon"
+          <div className="w-11 h-11 rounded-xl bg-[#c59a46]/20 border border-[#d6b068]/55 overflow-hidden flex items-center justify-center shadow-inner shadow-black/40">
+            <img
+              src="https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/heads/main/images/horse_race_icon.jpg"
+              alt="Royal Derby Icon"
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
             />
           </div>
           <div>
-            <h2 className="text-xl font-black text-on-surface uppercase tracking-tight">VIP HORSE DERBY</h2>
-            <p className="text-[10px] text-on-surface/40 font-black uppercase tracking-widest">High Stakes Racing • House Multiplier: 6x</p>
+            <h2 className="text-lg sm:text-2xl font-black tracking-[0.09em] uppercase text-[#f4e2b2]">Royal Horse Derby</h2>
+            <p className="text-[10px] sm:text-xs uppercase tracking-[0.28em] text-[#dec693]/75 font-bold">
+              Luxury Grandstand Broadcast • Dynamic Tote Market
+            </p>
           </div>
         </div>
-        
-        <div className="flex items-center gap-6">
-            <div className="hidden sm:flex -space-x-2">
-                {history.map((winnerId, i) => (
-                    <div 
-                        key={i} 
-                        className="w-8 h-8 rounded-full border-2 border-surface bg-surface-container-highest flex items-center justify-center text-[10px] font-bold text-on-surface"
-                        style={{ borderColor: winnerId === 0 ? '#ff5555' : winnerId === 1 ? '#55ff55' : '#5555ff' }}
-                    >
-                        {winnerId + 1}
-                    </div>
-                ))}
-            </div>
-            <button 
-                onClick={onExit}
-                className="p-2 hover:bg-white/5 rounded-full text-on-surface/40 hover:text-red-500 transition-colors"
-            >
-                <X size={24} />
-            </button>
+
+        <div className="flex items-center gap-4 sm:gap-6">
+          <div className="hidden sm:flex -space-x-2">
+            {history.map((winnerId, i) => (
+              <div
+                key={i}
+                className="w-8 h-8 rounded-full border-2 bg-[#1b1f1a] flex items-center justify-center text-[10px] font-black text-[#f7eed9]"
+                style={{ borderColor: HORSE_SWATCHES[winnerId % HORSE_SWATCHES.length] }}
+              >
+                {winnerId + 1}
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={onExit}
+            className="p-2 rounded-full text-[#f2e6ca]/70 hover:text-[#ff9c86] hover:bg-black/20 transition-colors"
+          >
+            <X size={24} />
+          </button>
         </div>
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Left: Game Canvas Area */}
-        <div className="flex-none lg:flex-1 relative bg-black/20 flex items-center justify-center p-2 sm:p-4 lg:p-8 min-h-[280px] aspect-video lg:aspect-auto overflow-hidden">
-          <div className="relative w-full h-full max-w-6xl max-h-[720px] rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-white/5 bg-[#0a0a0a] flex items-center justify-center [&_canvas]:w-full [&_canvas]:h-full [&_canvas]:object-contain">
-            <HorseRacingEngine 
-                width={1600} 
-                height={900} 
-                isRacing={isRacing} 
-                onRaceFinish={handleRaceFinish} 
-                onRaceUpdate={handleRaceUpdate}
-                horseImageUrl={HORSE_IMAGE_URL}
+        <div className="flex-none lg:flex-1 relative flex items-center justify-center p-2 sm:p-4 lg:p-8 min-h-[300px] aspect-video lg:aspect-auto overflow-hidden bg-[radial-gradient(circle_at_top,#2c3e2c_0%,#121913_58%,#090d09_100%)]">
+          <div className="relative w-full h-full max-w-6xl max-h-[720px] rounded-2xl sm:rounded-3xl overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.55)] border border-[#d2af68]/35 bg-[#0a120b] flex items-center justify-center [&_canvas]:w-full [&_canvas]:h-full [&_canvas]:object-contain">
+            <HorseRacingEngine
+              width={1600}
+              height={900}
+              isRacing={isRacing}
+              onRaceFinish={handleRaceFinish}
+              onRaceUpdate={handleRaceUpdate}
+              horseImageUrl={HORSE_IMAGE_URL}
+              horsesCount={HORSES_COUNT}
+              horseStrengths={horseStrengths}
             />
-            
-            {/* Overlay UI - Always rendered but conditionally visible */}
+
             <AnimatePresence>
-                {/* Pre-Race Bet Splash */}
-                {!isRacing && !showResult && (
-                    <motion.div 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center text-center p-12 z-50"
+              {!isRacing && !showResult && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-[linear-gradient(180deg,rgba(19,23,16,0.58)_0%,rgba(11,14,10,0.72)_100%)] backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-8 sm:p-12 z-50"
+                >
+                  <Trophy size={74} className="text-[#cfa44c] mb-6 drop-shadow-[0_0_12px_rgba(207,164,76,0.4)]" />
+                  <h1 className="text-4xl sm:text-6xl font-black text-[#f6e7c3] mb-4 uppercase tracking-[0.06em]">The Gates Are Open</h1>
+                  <p className="text-[#e5d4ac]/80 max-w-xl mx-auto uppercase tracking-[0.24em] text-[10px] sm:text-xs font-bold leading-relaxed">
+                    Stake your claim, choose your champion, and let the grandstand witness your fortune.
+                  </p>
+                </motion.div>
+              )}
+
+              {showResult && lastWinner !== null && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.92 }}
+                  className="absolute inset-x-0 bottom-6 sm:bottom-10 flex justify-center px-4 sm:px-10"
+                >
+                  <div className="bg-[linear-gradient(160deg,#322118_0%,#221710_100%)] border border-[#d0ab62]/50 p-5 sm:p-8 rounded-3xl shadow-[0_24px_44px_rgba(0,0,0,0.45)] flex flex-col sm:flex-row items-center gap-6 sm:gap-10 max-w-4xl w-full text-[#f1e8d3]">
+                    <div className="flex items-center gap-4 sm:gap-6">
+                      <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-[#c89b45] flex items-center justify-center text-[#1b140f] shadow-[0_10px_30px_rgba(200,155,69,0.35)]">
+                        <Trophy size={44} />
+                      </div>
+                      <div>
+                        <h2 className="text-2xl sm:text-4xl font-black uppercase tracking-[0.05em]">Winner: Horse #{lastWinner + 1}</h2>
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#dcbf86]/80">Stewards Confirmed Final Order</p>
+                      </div>
+                    </div>
+
+                    <div className="sm:flex-1 sm:border-l border-[#d0ab62]/25 sm:pl-8 text-center sm:text-left">
+                      {winningPayout > 0 ? (
+                        <div className="text-[#74f2a2]">
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] mb-1">You Won</p>
+                          <p className="text-3xl sm:text-4xl font-black">{formatCurrency(winningPayout)}</p>
+                        </div>
+                      ) : (
+                        <div className="text-[#e9dfca]/45">
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] mb-1">No Winnings</p>
+                          <p className="text-3xl sm:text-4xl font-black">$0.00</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => setShowResult(false)}
+                      className="px-6 py-3 sm:px-8 sm:py-4 bg-[#c89b45] text-[#24180f] rounded-2xl font-black uppercase tracking-[0.16em] hover:scale-105 active:scale-95 transition-all text-xs sm:text-sm"
                     >
-                        <Trophy size={80} className="text-secondary mb-6" />
-                        <h1 className="text-6xl font-black text-on-surface mb-4 uppercase tracking-tighter italic">PLACE YOUR BETS</h1>
-                        <p className="text-on-surface/60 max-w-md mx-auto uppercase tracking-[0.2em] text-xs font-bold leading-relaxed">
-                            Pick your champion. The higher the risk, the greater the glory. 
-                        </p>
-                    </motion.div>
-                )}
-
-                {/* Live Race GTA Override UI */}
-                {isRacing && !showResult && (
-                    <motion.div 
-                        initial={{ opacity: 0, y: -20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95 }}
-                        className="absolute top-4 inset-x-8 flex items-start justify-between pointer-events-none z-40"
-                    >
-                        {/* Fake Left Casino Branding */}
-                        <div className="bg-[#2A2B31] text-white px-8 py-3 rounded-xl shadow-2xl flex items-center justify-center border border-white/5 h-20 min-w-[240px]">
-                            <div className="flex flex-col items-center">
-                                <span className="font-serif italic text-2xl tracking-tighter font-medium text-white">Rias Gremory</span>
-                                <span className="text-[8px] uppercase tracking-[0.4em] text-white/50 font-black">Casino & Resort</span>
-                            </div>
-                        </div>
-
-                        {/* Center HUD Standings Panel */}
-                        <div className="bg-[#2A2B31] border border-[#3A3B41] rounded-xl shadow-2xl flex flex-col overflow-hidden mx-4 pb-3 flex-1 max-w-[600px] h-[100px] relative">
-                             {/* Top Leader Label Component */}
-                             <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#ff5500] text-white px-6 py-1 rounded-sm shadow-md z-10 transition-all">
-                                 <span className="text-[10px] font-black uppercase tracking-wider">LIVE STANDINGS</span>
-                             </div>
-
-                             {/* Portraits Row (Sorted by position) */}
-                             <div className="flex-1 flex items-center justify-between px-6 pt-3">
-                                  {sortedHorses.length > 0 ? sortedHorses.map((horse, idx) => {
-                                      const isPlayerChoice = bets.some(b => b.horseId === horse.id);
-                                      const rowColors = ['#ff5555', '#55ff55', '#5555ff', '#ffff55', '#ff55ff', '#55ffff', '#ffa500'];
-                                      return (
-                                          <motion.div 
-                                            key={horse.id} 
-                                            layout
-                                            transition={{ type: 'spring', stiffness: 200, damping: 25 }}
-                                            className="flex flex-col items-center gap-1 relative"
-                                          >
-                                                {isPlayerChoice && (
-                                                    <motion.div 
-                                                        initial={{ scale: 0 }}
-                                                        animate={{ scale: 1 }}
-                                                        className="absolute -top-2 -right-2 text-yellow-400 z-20" 
-                                                        style={{ textShadow: '0 0 4px black'}}
-                                                    >
-                                                        ★
-                                                    </motion.div>
-                                                )}
-                                                <div 
-                                                    className="w-10 h-10 rounded-full border-[3px] flex items-center justify-center bg-black shadow-inner overflow-hidden relative"
-                                                    style={{ borderColor: rowColors[horse.id] }}
-                                                >
-                                                    <div className="absolute inset-0 bg-white/10"></div>
-                                                    <div className="text-white font-black text-xs z-10">{horse.id + 1}</div>
-                                                </div>
-                                                <div className="text-[9px] font-bold text-white/60">
-                                                   {idx + 1}/{sortedHorses.length}
-                                                </div>
-                                          </motion.div>
-                                      );
-                                  }) : Array.from({length: 6}).map((_, i) => (
-                                      <div key={i} className="flex flex-col items-center gap-1 opacity-50">
-                                            <div className="w-10 h-10 rounded-full border-[3px] border-gray-600 bg-black"></div>
-                                      </div>
-                                  ))}
-                             </div>
-                             
-                             {/* Pseudo Progress bar track at bottom */}
-                             <div className="h-1 mt-auto mx-4 rounded-full bg-black relative overflow-hidden">
-                                 <div 
-                                     className="absolute top-0 left-0 bottom-0 bg-[#ff5500] rounded-full transition-all duration-100 ease-linear shadow-[0_0_10px_#ff5500]"
-                                     style={{ width: `${raceProgress}%` }}
-                                 ></div>
-                             </div>
-                        </div>
-
-                        {/* Right Event Branding & Balance */}
-                        <div className="flex flex-col items-end gap-2">
-                            <div className="bg-[#2A2B31] px-6 py-3 rounded-xl shadow-2xl border border-white/5 h-20 min-w-[200px] flex items-center justify-center">
-                                <div className="flex flex-col items-center">
-                                    <span className="font-black italic text-[#ffff00] text-xl tracking-tighter" style={{ textShadow: '2px 2px 0px rgba(0,0,0,0.5)'}}>INSIDE TRACK</span>
-                                    <span className="text-[7px] uppercase tracking-widest text-[#ffaa00] font-black">Computerized Betting</span>
-                                </div>
-                            </div>
-                            <div className="px-4 py-1 bg-black/60 backdrop-blur-md rounded-md border border-white/10">
-                                <span className="text-white font-black font-mono">
-                                    <span className="opacity-50 mr-1">$</span>{activePlayer.balance.toLocaleString()}
-                                </span>
-                            </div>
-                        </div>
-                    </motion.div>
-                )}
-                
-                {/* Result Screen */}
-                {showResult && lastWinner !== null && (
-                    <motion.div 
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        className="absolute inset-x-0 bottom-12 flex justify-center px-12"
-                    >
-                        <div className="bg-surface/90 backdrop-blur-xl border-2 border-secondary/30 p-8 rounded-[32px] shadow-2xl flex items-center gap-12 max-w-3xl w-full">
-                            <div className="flex items-center gap-6">
-                                <div className="w-24 h-24 rounded-full bg-secondary flex items-center justify-center text-surface shadow-lg shadow-secondary/20">
-                                    <Trophy size={48} />
-                                </div>
-                                <div>
-                                    <h2 className="text-4xl font-black text-on-surface uppercase tracking-tight">WINNER: HORSE #{lastWinner + 1}</h2>
-                                    <p className="text-secondary font-black uppercase tracking-widest text-[10px]">Photo Finish recorded</p>
-                                </div>
-                            </div>
-                            <div className="flex-1 border-l border-outline-variant/10 pl-12">
-                                {winningPayout > 0 ? (
-                                    <div className="text-green-500">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] mb-1">YOU WON</p>
-                                        <p className="text-4xl font-black italic">{formatCurrency(winningPayout)}</p>
-                                    </div>
-                                ) : (
-                                    <div className="text-on-surface/40">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.2em] mb-1">NO WINNINGS</p>
-                                        <p className="text-4xl font-black italic">$0.00</p>
-                                    </div>
-                                )}
-                            </div>
-                            <button 
-                                onClick={() => setShowResult(false)}
-                                className="px-8 py-4 bg-secondary text-surface rounded-2xl font-black uppercase tracking-widest hover:scale-105 active:scale-95 transition-all text-sm"
-                            >
-                                CONTINUE
-                            </button>
-                        </div>
-                    </motion.div>
-                )}
+                      Continue
+                    </button>
+                  </div>
+                </motion.div>
+              )}
             </AnimatePresence>
           </div>
         </div>
 
-        {/* Right: Controls Panel */}
-        <div className="flex-1 lg:flex-none w-full lg:w-[420px] bg-surface/30 backdrop-blur-xl border-t lg:border-l border-outline-variant/10 p-6 sm:p-10 flex flex-col gap-8 lg:gap-10 overflow-y-auto min-h-0">
-            {/* Bet Selection */}
-            <div className="space-y-4 sm:space-y-6">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-[9px] sm:text-[10px] font-black text-on-surface/40 uppercase tracking-[0.3em]">SELECT HORSE</h3>
-                    <div className="px-3 py-1 bg-secondary/10 border border-secondary/20 rounded-full text-[8px] sm:text-[9px] font-black text-secondary tracking-widest leading-none">
-                        PRO ODDS: 1/6
-                    </div>
+        <div className="flex-1 lg:flex-none w-full lg:w-[430px] bg-[linear-gradient(180deg,#1f2a1f_0%,#151d16_100%)] border-t lg:border-l border-[#b68a39]/25 p-5 sm:p-8 lg:p-9 flex flex-col gap-6 overflow-y-auto min-h-0">
+          <div className="rounded-2xl border border-[#b68a39]/20 bg-black/20 p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[10px] font-black text-[#dcbc7b] uppercase tracking-[0.28em]">Select Horse</h3>
+              {selectedHorseId !== null && marketByHorseId.get(selectedHorseId) ? (
+                <div className="px-3 py-1 bg-[#b68a39]/15 border border-[#b68a39]/30 rounded-full text-[9px] font-black text-[#e6cb95] tracking-widest leading-none">
+                  {marketByHorseId.get(selectedHorseId)?.tier} • {marketByHorseId.get(selectedHorseId)?.decimalOdds.toFixed(2)}x
                 </div>
-                
-                <div className="grid grid-cols-3 gap-3 sm:gap-4">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                        <button
-                            key={i}
-                            onClick={() => !isRacing && setSelectedHorseId(i)}
-                            className={cn(
-                                "group relative flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl sm:rounded-2xl border-2 transition-all duration-300",
-                                selectedHorseId === i 
-                                  ? "bg-secondary/10 border-secondary shadow-lg shadow-secondary/5" 
-                                  : "bg-surface/50 border-outline-variant/10 hover:border-secondary/30"
-                            )}
-                        >
-                            <div 
-                                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-xs sm:text-sm font-black mb-2 transition-transform group-hover:scale-110"
-                                style={{ backgroundColor: selectedHorseId === i ? '#f00' : '#222', color: '#fff' }}
-                            >
-                                {i + 1}
-                            </div>
-                            <span className="text-[9px] sm:text-[10px] font-black text-on-surface/60 uppercase tracking-widest">Horse {i+1}</span>
-                            {selectedHorseId === i && (
-                                <motion.div layoutId="selection-ring" className="absolute -inset-1 rounded-[16px] sm:rounded-[20px] border border-secondary shadow-[0_0_15px_rgba(var(--secondary-rgb),0.2)]" />
-                            )}
-                        </button>
-                    ))}
+              ) : (
+                <div className="px-3 py-1 bg-[#b68a39]/10 border border-[#b68a39]/20 rounded-full text-[9px] font-black text-[#d9c79f]/80 tracking-widest leading-none">
+                  Pick Runner
                 </div>
+              )}
             </div>
 
-            {/* Bet Amount */}
-            <div className="space-y-4 sm:space-y-6">
-                 <div className="flex items-center justify-between">
-                    <h3 className="text-[9px] sm:text-[10px] font-black text-on-surface/40 uppercase tracking-[0.3em]">WAGER AMOUNT</h3>
-                    <div className="text-[9px] sm:text-[10px] font-black text-on-surface/60">BAL: {formatCurrency(activePlayer.balance)}</div>
-                </div>
-                
-                <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3">
-                    {[100, 500, 1000, 5000].map((amt) => (
-                        <button
-                            key={amt}
-                            onClick={() => !isRacing && setSelectedChip(amt)}
-                            className={cn(
-                                "flex-1 py-3 rounded-lg sm:rounded-xl border font-black text-xs transition-all",
-                                selectedChip === amt 
-                                    ? "bg-on-surface text-surface border-on-surface" 
-                                    : "bg-surface/50 border-outline-variant/10 hover:border-on-surface/30 text-on-surface/60"
-                            )}
-                        >
-                            <span className="opacity-50 text-[9px] sm:text-[10px] mr-0.5">$</span>{amt.toLocaleString()}
-                        </button>
-                    ))}
-                </div>
-                
-                <div className="flex items-center gap-2 sm:gap-4">
-                    <button
-                        onClick={() => !isRacing && setBetAmount(prev => Math.max(0, prev - selectedChip))}
-                        disabled={isRacing || betAmount === 0}
-                        className="w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center rounded-xl bg-surface/50 border-2 border-outline-variant/10 text-on-surface/40 hover:text-red-500 hover:border-red-500/30 transition-all disabled:opacity-30"
-                    >
-                        <Minus size={24} />
-                    </button>
+            <div className="grid grid-cols-5 gap-2">
+              {Array.from({ length: HORSES_COUNT }).map((_, i) => (
+                (() => {
+                  const market = marketByHorseId.get(i);
+                  const tierTone =
+                    market?.tier === 'Favorite'
+                      ? 'text-[#f6df8b]'
+                      : market?.tier === 'Contender'
+                        ? 'text-[#9ce3ff]'
+                        : market?.tier === 'Midfield'
+                          ? 'text-[#cfb8ff]'
+                          : 'text-[#f2b0a6]';
 
-                    <div className="relative group flex-1">
-                        <input 
-                            type="text"
-                            value={formatCurrency(betAmount)}
-                            readOnly
-                            disabled={isRacing}
-                            className="w-full h-14 sm:h-16 bg-surface-container-highest/50 border-2 border-outline-variant/5 rounded-xl sm:rounded-2xl pl-4 pr-24 sm:pr-28 text-lg sm:text-xl font-black text-on-surface outline-none cursor-default"
-                        />
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 sm:gap-3">
-                            <button 
-                                onClick={() => !isRacing && setBetAmount(activePlayer.balance)}
-                                disabled={isRacing}
-                                className="bg-secondary/10 hover:bg-secondary/20 text-secondary border border-secondary/20 font-black tracking-widest text-[9px] sm:text-[10px] px-2 sm:px-3 py-1 sm:py-1.5 rounded-md sm:rounded-lg transition-colors"
-                            >
-                                MAX
-                            </button>
-                            <span className="text-on-surface/20 font-black italic tracking-tighter text-sm sm:text-base hidden xs:inline transition-colors">
-                                USD
-                            </span>
-                        </div>
-                    </div>
-
-                    <button
-                        onClick={() => !isRacing && setBetAmount(prev => prev + selectedChip)}
-                        disabled={isRacing}
-                        className="w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center rounded-xl bg-surface/50 border-2 border-outline-variant/10 text-on-surface/40 hover:text-green-500 hover:border-green-500/30 transition-all disabled:opacity-30"
-                    >
-                        <Plus size={24} />
-                    </button>
-                </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex flex-col gap-4 mt-auto">
-                {activePlayer.balance < betAmount && (
-                    <div className="flex items-center gap-3 p-3 sm:p-4 bg-red-500/10 border border-red-500/20 rounded-xl sm:rounded-2xl text-red-500 mb-2">
-                        <AlertCircle size={16} />
-                        <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">Insufficient Credits</span>
-                    </div>
-                )}
-                
-                <div className="flex gap-4">
-                    <button
-                        onClick={placeBet}
-                        disabled={isRacing || selectedHorseId === null || activePlayer.balance < betAmount}
-                        className={cn(
-                            "flex-1 h-16 sm:h-20 rounded-xl sm:rounded-2xl font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 border-2 shadow-xl text-xs sm:text-sm",
-                            bets.length > 0 
-                                ? "bg-green-500/10 border-green-500/50 text-green-500 cursor-default"
-                                : selectedHorseId === null || activePlayer.balance < betAmount 
-                                    ? "bg-surface/50 border-outline-variant/10 text-on-surface/20 opacity-50"
-                                    : "bg-on-surface text-surface border-on-surface hover:scale-[1.02] active:scale-95"
-                        )}
-                    >
-                        {bets.length > 0 ? (
-                            <>WAGER PLACED</>
-                        ) : (
-                            <>
-                                <CircleDollarSign size={16} className="sm:w-5 sm:h-5" />
-                                CONFIRM BET
-                            </>
-                        )}
-                    </button>
-                </div>
-                
+                  return (
                 <button
-                    onClick={startRace}
-                    disabled={isRacing || bets.length === 0}
-                    className={cn(
-                        "w-full h-16 sm:h-20 rounded-xl sm:rounded-2xl font-black uppercase tracking-[0.3em] transition-all flex items-center justify-center gap-3 shadow-2xl text-xs sm:text-sm",
-                        isRacing || bets.length === 0
-                            ? "bg-surface/50 text-on-surface/10 border border-white/5"
-                            : "bg-secondary text-surface hover:scale-[1.02] active:scale-95 animate-pulse"
-                    )}
+                  key={i}
+                  onClick={() => !isRacing && setSelectedHorseId(i)}
+                  className={cn(
+                    'group relative flex flex-col items-center justify-center py-2 rounded-xl border transition-all duration-200',
+                    selectedHorseId === i
+                      ? 'bg-[#b68a39]/18 border-[#d9b66f] shadow-[0_0_0_1px_rgba(217,182,111,0.4)]'
+                      : 'bg-[#111611]/60 border-[#9f7f41]/20 hover:border-[#cda65c]/50'
+                  )}
                 >
-                    <Play size={16} fill="currentColor" className="sm:w-5 sm:h-5" />
-                    {isRacing ? "IN PROGRESS" : "START DERBY"}
+                  <div
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-black mb-1 text-[#10120e]"
+                    style={{ backgroundColor: HORSE_SWATCHES[i % HORSE_SWATCHES.length] }}
+                  >
+                    {i + 1}
+                  </div>
+                  <span className="text-[9px] font-black text-[#f0e3c6]/75">H{i + 1}</span>
+                  <span className={cn('text-[8px] font-black mt-0.5 leading-none', tierTone)}>{market?.decimalOdds.toFixed(2)}x</span>
                 </button>
+                  );
+                })()
+              ))}
             </div>
+          </div>
+
+          {sortedByOdds.length > 0 && (
+            <div className="rounded-2xl border border-[#b68a39]/20 bg-black/20 p-4 space-y-3">
+              <h3 className="text-[10px] font-black text-[#dcbc7b] uppercase tracking-[0.28em]">Market Board</h3>
+              <div className="space-y-1.5">
+                {sortedByOdds.map((entry) => (
+                  <div key={entry.horseId} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#13151f]/90 border border-white/5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-1 h-4 rounded-full" style={{ backgroundColor: HORSE_SWATCHES[entry.horseId % HORSE_SWATCHES.length] }} />
+                      <span className="text-[10px] font-black text-[#ecf1ff]">Horse {entry.horseId + 1}</span>
+                      <span className="text-[9px] font-black text-[#adb7d8]/80">{entry.tier}</span>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[10px] font-black text-[#f8e8be]">{entry.decimalOdds.toFixed(2)}x</div>
+                      <div className="text-[8px] font-black text-[#97a3c7]/80">{(entry.probability * 100).toFixed(1)}%</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-[#b68a39]/20 bg-black/20 p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[10px] font-black text-[#dcbc7b] uppercase tracking-[0.28em]">Wager Amount</h3>
+              <div className="text-[10px] font-black text-[#e4d2ac]/75">BAL: {formatCurrency(activePlayer.balance)}</div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {[100, 500, 1000, 5000].map((amt) => (
+                <button
+                  key={amt}
+                  onClick={() => !isRacing && setSelectedChip(amt)}
+                  className={cn(
+                    'py-2.5 rounded-lg border font-black text-xs transition-all',
+                    selectedChip === amt
+                      ? 'bg-[#dbc084] text-[#25190f] border-[#f0d39a]'
+                      : 'bg-[#111611]/60 border-[#8d7138]/25 hover:border-[#c8a460]/50 text-[#e8dbc0]/70'
+                  )}
+                >
+                  <span className="opacity-60 text-[9px] mr-0.5">$</span>
+                  {amt.toLocaleString()}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => !isRacing && setBetAmount((prev) => Math.max(0, prev - selectedChip))}
+                disabled={isRacing || betAmount === 0}
+                className="w-12 h-12 flex items-center justify-center rounded-xl bg-[#141914] border border-[#8f7440]/30 text-[#e3d1ae]/60 hover:text-[#ff9b8d] hover:border-[#cf7868]/60 transition-all disabled:opacity-30"
+              >
+                <Minus size={20} />
+              </button>
+
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={formatCurrency(betAmount)}
+                  readOnly
+                  disabled={isRacing}
+                  className="w-full h-12 bg-[#0f150f] border border-[#8f7440]/30 rounded-xl pl-3 pr-20 text-lg font-black text-[#f5e5bf] outline-none cursor-default"
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                  <button
+                    onClick={() => !isRacing && setBetAmount(activePlayer.balance)}
+                    disabled={isRacing}
+                    className="bg-[#b68a39]/20 hover:bg-[#b68a39]/30 text-[#e4c98e] border border-[#b68a39]/35 font-black tracking-widest text-[9px] px-2 py-1 rounded-md transition-colors"
+                  >
+                    MAX
+                  </button>
+                  <span className="text-[#bfa97c]/45 font-black text-xs hidden xs:inline">USD</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => !isRacing && setBetAmount((prev) => prev + selectedChip)}
+                disabled={isRacing}
+                className="w-12 h-12 flex items-center justify-center rounded-xl bg-[#141914] border border-[#8f7440]/30 text-[#e3d1ae]/60 hover:text-[#74f2a2] hover:border-[#6ec896]/60 transition-all disabled:opacity-30"
+              >
+                <Plus size={20} />
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[#b68a39]/20 bg-black/20 p-4 space-y-4 mt-auto">
+            {activePlayer.balance < betAmount && (
+              <div className="flex items-center gap-3 p-3 bg-[#a53838]/18 border border-[#d36a6a]/35 rounded-xl text-[#ff9f9f]">
+                <AlertCircle size={16} />
+                <span className="text-[10px] font-black uppercase tracking-widest">Insufficient Credits</span>
+              </div>
+            )}
+
+            <button
+              onClick={placeBet}
+              disabled={isRacing || selectedHorseId === null || activePlayer.balance < betAmount}
+              className={cn(
+                'w-full h-14 rounded-xl font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 border text-xs',
+                bets.length > 0
+                  ? 'bg-[#2a6c3f]/22 border-[#5ea97a]/55 text-[#9bffbe] cursor-default'
+                  : selectedHorseId === null || activePlayer.balance < betAmount
+                    ? 'bg-[#0f150f]/70 border-[#7f6536]/20 text-[#d7c9ab]/30 opacity-60'
+                    : 'bg-[#d2ac62] text-[#26190f] border-[#f0ce89] hover:scale-[1.01] active:scale-95'
+              )}
+            >
+              {bets.length > 0 ? (
+                <>Wager @ {bets[0].decimalOdds.toFixed(2)}x</>
+              ) : (
+                <>
+                  <CircleDollarSign size={16} />
+                  Confirm Bet
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={startRace}
+              disabled={isRacing || bets.length === 0}
+              className={cn(
+                'w-full h-14 rounded-xl font-black uppercase tracking-[0.28em] transition-all flex items-center justify-center gap-2 shadow-xl text-xs',
+                isRacing || bets.length === 0
+                  ? 'bg-[#101610] text-[#e0d2b7]/20 border border-[#8b7141]/20'
+                  : 'bg-[#5e7a35] text-[#f4efdf] border border-[#99bf62] hover:scale-[1.01] active:scale-95'
+              )}
+            >
+              <Play size={16} fill="currentColor" />
+              {isRacing ? 'In Progress' : 'Start Derby'}
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-[#b68a39]/20 bg-black/20 p-4">
+            <h4 className="text-[10px] font-black uppercase tracking-[0.24em] text-[#dcbc7b] mb-3">Live Standings</h4>
+            <div className="overflow-hidden rounded-xl border border-white/5">
+              {f1Standings.length > 0 ? (
+                f1Standings.map(({ horse, idx, delta }) => (
+                  <motion.div
+                    key={horse.id}
+                    layout
+                    transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+                    className={cn(
+                      'relative flex items-center h-9 px-3 bg-[#141626] border-b border-white/5 last:border-b-0',
+                      idx % 2 === 0 ? 'bg-[#191b2b]' : 'bg-[#131525]'
+                    )}
+                  >
+                    <span className="w-6 text-[16px] font-black tracking-tight text-[#d6dae6]/90">{idx + 1}</span>
+                    <span className="w-1 h-5 rounded-full mx-2" style={{ backgroundColor: HORSE_SWATCHES[horse.id % HORSE_SWATCHES.length] }} />
+                    <span className="text-[12px] leading-none font-black tracking-[0.02em] text-[#f3f5ff] truncate pr-2">{horse.name}</span>
+                    <motion.span
+                      key={`${horse.id}-${delta}`}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: delta === 0 ? 0.55 : 1, y: 0 }}
+                      transition={{ duration: 0.28 }}
+                      className={cn(
+                        'ml-auto text-[10px] font-black tracking-wider',
+                        delta > 0 ? 'text-[#54f0aa]' : delta < 0 ? 'text-[#ff8f93]' : 'text-[#9ea6bf]'
+                      )}
+                    >
+                      {delta > 0 ? `+${delta}` : delta < 0 ? `${delta}` : `#${horse.id + 1}`}
+                    </motion.span>
+                  </motion.div>
+                ))
+              ) : (
+                <div className="h-24 grid place-items-center text-[10px] tracking-[0.18em] uppercase text-[#8f95aa] font-black bg-[#131525]">
+                  Standings Awaiting Start
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

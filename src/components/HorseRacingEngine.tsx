@@ -1,13 +1,14 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Application, useTick, extend } from '@pixi/react';
 import * as PIXI from 'pixi.js';
 import '@pixi/gif';
+import derbySkyStandsUrl from '../assets/horse-racing/derby-sky-stands.png';
 
-// Setup @pixi/react extension for v8
 extend({
   Container: PIXI.Container,
   Graphics: PIXI.Graphics,
-  Text: PIXI.Text
+  Text: PIXI.Text,
+  Sprite: PIXI.Sprite
 });
 
 export interface Horse {
@@ -21,326 +22,446 @@ export interface Horse {
   laneIdx: number;
   variation: number;
   burstCooldown: number;
+  startDelayMs: number;
+  paceFactor: number;
+}
+
+export interface RaceUpdatePayload {
+  horses: Horse[];
+  leaderProgress: number;
+  elapsedMs: number;
+  standings: number[];
 }
 
 export interface HorseRacingEngineProps {
   onRaceFinish: (winnerId: number) => void;
-  onRaceUpdate?: (horses: Horse[], progress: number) => void;
+  onRaceUpdate?: (payload: RaceUpdatePayload) => void;
   isRacing: boolean;
   horsesCount?: number;
   width: number;
   height: number;
   horseImageUrl?: string;
+  horseStrengths?: number[];
 }
 
-// --- TRACK CONSTANTS & MATH ---
-const L = 6000;
-const R = 800;
-const LANE_WIDTH = 55;
 const ASSETS = {
-  DIRT: "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/horse_race/textures/dirt_diff_1k.jpg",
-  HORSE: "https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/gif/horse_gif_loop.gif"
+  HORSE: 'https://raw.githubusercontent.com/CivisNacho/Rias-Casino-Assets/main/gif/horse_gif_loop.gif',
+  STANDS: derbySkyStandsUrl
 };
 
-const TRACK_BASES = {
-    STRAIGHT_1_END: L,
-    CURVE_1_END: L + Math.PI * R,
-    STRAIGHT_2_END: 2 * L + Math.PI * R,
-    CURVE_2_END: 2 * L + 2 * Math.PI * R
+const HORSE_NAMES = [
+  'Pirate Sandy',
+  'Calm Tara',
+  "Owen's Raging",
+  'Sneezing Window',
+  "Jen's Binging",
+  'Snoozing Book',
+  "Eli's Sunny Table",
+  'Calm Glass',
+  'Pirate Sue',
+  'Seizing Lion',
+  'Dancing Umbrella',
+  'Intelligent Maniac'
+];
+
+const HORSE_COLORS = [
+  0xf8d568,
+  0xb7e08c,
+  0x9ac7ff,
+  0xffc9a6,
+  0xcab6ff,
+  0x8fe5cf,
+  0xf6a5d5,
+  0xa7f0ff,
+  0xffd98f,
+  0xdeb8ff,
+  0xbfe6a7,
+  0xffffff
+];
+
+const WORLD = {
+  raceDistance: 5400,
+  topAreaRatio: 0.38,
+  sidePadding: 110,
+  topHudHeight: 84,
+  bottomHudHeight: 118,
+  fieldBottomGap: 18
 };
 
-// Finish line is strategically placed near the end of the top straight
-const RACE_DISTANCE = TRACK_BASES.STRAIGHT_2_END - 1000;
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-function getTrackTransform(dist: number, laneIdx: number) {
-    // Loop the track infinitely just in case they run past finish line
-    const d = dist % TRACK_BASES.CURVE_2_END;
-    const r = R + laneIdx * LANE_WIDTH + LANE_WIDTH / 2;
-    let x = 0, y = 0, angle = 0;
+const formatRaceClock = (ms: number) => {
+  const totalCentiseconds = Math.floor(ms / 10);
+  const seconds = Math.floor(totalCentiseconds / 100);
+  const centis = totalCentiseconds % 100;
+  return `${seconds.toString().padStart(2, '0')}.${centis.toString().padStart(2, '0')}`;
+};
 
-    if (d < TRACK_BASES.STRAIGHT_1_END) {
-        x = -L/2 + d;
-        y = r;
-        angle = 0; // facing right
-    } else if (d < TRACK_BASES.CURVE_1_END) {
-        const dc = d - TRACK_BASES.STRAIGHT_1_END;
-        const fc = dc / (Math.PI * R);
-        const theta = Math.PI/2 - Math.PI * fc;
-        x = L/2 + r * Math.cos(theta);
-        y = r * Math.sin(theta);
-        angle = -Math.PI * fc; // curves downward/right
-    } else if (d < TRACK_BASES.STRAIGHT_2_END) {
-        const ds = d - TRACK_BASES.CURVE_1_END;
-        x = L/2 - ds;
-        y = -r;
-        angle = -Math.PI; // facing left
-    } else {
-        const dc = d - TRACK_BASES.STRAIGHT_2_END;
-        const fc = dc / (Math.PI * R);
-        const theta = -Math.PI/2 - Math.PI * fc;
-        x = -L/2 + r * Math.cos(theta);
-        y = r * Math.sin(theta);
-        angle = -Math.PI - Math.PI * fc; // curves upward/left
-    }
+const getLayout = (width: number, height: number, lanes: number) => {
+  const topAreaHeight = Math.floor(height * WORLD.topAreaRatio);
+  const fieldTop = topAreaHeight;
+  const fieldBottom = height - WORLD.bottomHudHeight - WORLD.fieldBottomGap;
+  const fieldHeight = Math.max(220, fieldBottom - fieldTop);
+  const laneHeight = fieldHeight / lanes;
+  const startX = WORLD.sidePadding;
+  const finishX = width - WORLD.sidePadding;
+  const trackWidth = finishX - startX;
 
-    return { x, y, angle };
-}
+  return { topAreaHeight, fieldTop, fieldBottom, fieldHeight, laneHeight, startX, finishX, trackWidth };
+};
 
-const RaceTrack = ({ lanes }: { lanes: number }) => {
-  const drawTrack = useCallback((g: PIXI.Graphics) => {
-    g.clear();
-    
-    const dirtTexture = PIXI.Assets.get(ASSETS.DIRT);
-    const envW = 2 * L + 12000;
-    const envH = 2 * R + 12000;
-    
-    // 1. Background (Greenery)
-    g.rect(-L - 6000, -R - 6000, envW, envH).fill({ color: 0x1f3a15 });
-    
-    // 2. Inner Field (Center grass)
-    g.roundRect(-L/2 - (R - 50), -R + 50, L + 2 * (R - 50), 2 * R - 100, R - 50).fill({ color: 0x2e4f22 });
-    
-    // 3. Track Surface (Using thick stroke for reliability with texture)
-    const totalTrackWidth = lanes * LANE_WIDTH;
-    const strokeR = R + totalTrackWidth / 2;
-    const strokeW = totalTrackWidth + 40;
+const positionToTrackX = (position: number, trackStartX: number, trackWidth: number) => {
+  const normalized = clamp(position / WORLD.raceDistance, 0, 1);
+  return trackStartX + normalized * trackWidth;
+};
 
-    const rectX = -L/2 - strokeR;
-    const rectY = -strokeR;
-    const rectW = L + 2 * strokeR;
-    const rectH = 2 * strokeR;
-    
-    // Check if texture loaded and create styling
-    if (dirtTexture) {
-        g.roundRect(rectX, rectY, rectW, rectH, strokeR).stroke({ width: strokeW, texture: dirtTexture, color: 0x6d5b4f });
-    } else {
-        g.roundRect(rectX, rectY, rectW, rectH, strokeR).stroke({ width: strokeW, color: 0x3d2b1f });
-    }
+const StadiumBackdrop = ({ width, topAreaHeight, isAssetsLoaded }: { width: number; topAreaHeight: number; isAssetsLoaded: boolean }) => {
+  const texture = PIXI.Assets.get(ASSETS.STANDS);
 
-    // 4. Lane Dividers
-    for (let i = 0; i <= lanes; i++) {
-        const laneR = R + i * LANE_WIDTH;
-        g.roundRect(-L/2 - laneR, -laneR, L + 2 * laneR, 2 * laneR, laneR).stroke({ width: 3, color: 0x776655, alpha: 0.4 });
-    }
+  if (!isAssetsLoaded || !texture) {
+    return (
+      <pixiGraphics
+        draw={(g) => {
+          g.clear();
+          g.rect(0, 0, width, topAreaHeight).fill({ color: 0x63b9ff });
+          g.rect(0, topAreaHeight - 70, width, 70).fill({ color: 0x6a8b63, alpha: 0.7 });
+        }}
+      />
+    );
+  }
 
-    // 5. Grandstands / Public Crowd
-    // Base structure of the stadium complex
-    g.roundRect(-L/2.5 - 200, -R - totalTrackWidth - 2800, L/1.25 + 400, 2400, 100).fill({ color: 0x222222 });
-    
-    for (let t = 0; t < 5; t++) {
-        const tierWidth = L/1.25;
-        const tierHeight = 250;
-        const tierY = -R - totalTrackWidth - 2500 + t * tierHeight;
-        g.rect(-L/2.5, tierY, tierWidth, tierHeight - 10).fill({ color: t % 2 === 0 ? 0x2a2a2a : 0x333333 });
-        
-        // Add random crowd members
-        for (let j = 0; j < 300; j++) {
-             const px = -L/2.5 + Math.random() * tierWidth;
-             const py = tierY + Math.random() * (tierHeight - 20);
-             const colors = [0xff4444, 0x44ff44, 0x4444ff, 0xffff44, 0xff44ff, 0x44ffff, 0xffffff];
-             const color = colors[Math.floor(Math.random() * colors.length)];
-             g.circle(px, py, 12).fill({ color });
-        }
-    }
+  return <pixiSprite texture={texture} x={0} y={0} width={width} height={topAreaHeight} />;
+};
 
-    // Infield Screen / Advertising Board
-    g.rect(-600, -R + 300, 1200, 150).fill({ color: 0x111111 });
-    g.rect(-580, -R + 310, 1160, 130).fill({ color: 0x0a0c10 });
-    // Text can't be easily drawn on pure graphics unless we use PIXI.Text, we'll draw "RIAS RESORT" using small rects as a placeholder or use PIXI.Text in the main component.
-    g.rect(-580, -R + 310, 300, 130).fill({ color: 0xffaa00, alpha: 0.2 }); // Logo simulation
-    
-    // Coaches & Staff in the infield (Inner Fence)
-    for (let c = 0; c < 30; c++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = R - 150 + Math.random() * 50;
-        const isCurve1 = angle < Math.PI / 2 || angle > Math.PI * 1.5;
-        let cx = 0, cy = 0;
-        
-        if (angle < Math.PI / 2) {
-             cx = L/2 + Math.cos(angle) * dist;
-             cy = Math.sin(angle) * dist;
-        } else if (angle < Math.PI) {
-             cx = Math.cos(angle) * dist;
-             cy = Math.sin(angle) * dist;
-        } else if (angle < Math.PI * 1.5) {
-             cx = -L/2 + Math.cos(angle) * dist;
-             cy = Math.sin(angle) * dist;
-        } else {
-             cx = Math.cos(angle) * dist;
-             cy = Math.sin(angle) * dist;
-        }
-        
-        const staffColor = Math.random() > 0.5 ? 0xffddaa : 0xaaddff;
-        g.circle(cx, cy, 18).fill({ color: staffColor });
-    }
+const TrackLayer = ({ width, height, lanes }: { width: number; height: number; lanes: number }) => {
+  const drawTrack = useCallback(
+    (g: PIXI.Graphics) => {
+      g.clear();
 
-    // 6. Start Line structure
-    g.moveTo(-L/2, R - 50).lineTo(-L/2, R + totalTrackWidth + 50).stroke({ width: 40, color: 0xdddddd, alpha: 0.9 });
-    
-    // 7. Finish Line Checkered Pattern
-    const finishX = -L/2 + 1000;
-    const finishYStart = -(R + totalTrackWidth + 50);
-    const finishYEnd = -R + 50;
-    
-    // Draw finish banner above the track
-    g.rect(finishX - 80, finishYStart - 100, 160, Math.abs(finishYEnd - finishYStart) + 200).fill({ color: 0xffffff, alpha: 0.1 });
-    g.circle(finishX, finishYStart - 50, 40).fill({ color: 0xff0000 }); // Finish pole
-    g.circle(finishX, finishYEnd + 50, 40).fill({ color: 0xff0000 }); // Finish pole
-    
-    for (let c = 0; c < 2; c++) {
-        const cx = finishX - 20 + c * 20;
-        let toggle = c % 2;
-        for (let cy = finishYStart; cy < finishYEnd; cy += 20) {
-            if (cy > -R - totalTrackWidth && cy < -R) {
-               g.rect(cx, cy, 20, 20).fill({ color: toggle ? 0x000000 : 0xffffff, alpha: 0.9 });
-            }
-            toggle = 1 - toggle;
-        }
-    }
-  }, [lanes]);
+      const layout = getLayout(width, height, lanes);
+      const { fieldTop, fieldBottom, laneHeight, startX, finishX, trackWidth } = layout;
+
+      g.rect(0, fieldTop, width, fieldBottom - fieldTop).fill({ color: 0x46cd17 });
+
+      for (let i = 0; i < lanes; i++) {
+        const y = fieldTop + i * laneHeight;
+        g.rect(0, y, width, laneHeight).fill({ color: i % 2 === 0 ? 0x4ad71b : 0x41c817 });
+      }
+
+      g.rect(0, fieldBottom, width, height - fieldBottom).fill({ color: 0x2f6d30 });
+
+      // Start lane corridor (very high contrast)
+      g.rect(startX - 32, fieldTop, 64, fieldBottom - fieldTop).fill({ color: 0xffffff, alpha: 0.22 });
+      g.moveTo(startX - 28, fieldTop).lineTo(startX - 28, fieldBottom).stroke({ color: 0xff2d2d, width: 4, alpha: 0.92 });
+      g.moveTo(startX + 28, fieldTop).lineTo(startX + 28, fieldBottom).stroke({ color: 0xff2d2d, width: 4, alpha: 0.92 });
+      g.moveTo(startX, fieldTop).lineTo(startX, fieldBottom).stroke({ color: 0xffffff, width: 4, alpha: 0.98 });
+
+      // Starting box structure and per-lane stall fronts
+      const gateDepth = Math.max(34, laneHeight * 0.68);
+      const gateBackX = startX - gateDepth - 16;
+      g.roundRect(gateBackX - 10, fieldTop - 10, gateDepth + 40, fieldBottom - fieldTop + 20, 8).fill({ color: 0x293030, alpha: 0.9 });
+      for (let i = 0; i < lanes; i++) {
+        const laneY = fieldTop + i * laneHeight;
+        const stallH = laneHeight - 4;
+        g.rect(gateBackX, laneY + 2, gateDepth, stallH).fill({ color: i % 2 === 0 ? 0x6f7d78 : 0x5f6c68, alpha: 0.95 });
+        g.rect(startX - 10, laneY + 3, 8, stallH - 2).fill({ color: 0xf6f6f6, alpha: 0.96 });
+        g.rect(startX - 2, laneY + 3, 2, stallH - 2).fill({ color: 0x181818, alpha: 0.92 });
+      }
+
+      g.roundRect(gateBackX - 16, fieldTop - 40, gateDepth + 56, 30, 5).fill({ color: 0x2f3430, alpha: 0.96 });
+      g.roundRect(gateBackX - 12, fieldTop - 36, gateDepth + 48, 22, 4).fill({ color: 0xe0b84a, alpha: 0.98 });
+
+      const checkSize = Math.max(8, Math.floor((fieldBottom - fieldTop) / 26));
+
+      // Finish lane corridor markings (very high contrast)
+      g.rect(finishX - 34, fieldTop, 68, fieldBottom - fieldTop).fill({ color: 0xfff6df, alpha: 0.2 });
+      g.moveTo(finishX - 30, fieldTop).lineTo(finishX - 30, fieldBottom).stroke({ color: 0x111111, width: 4, alpha: 0.9 });
+      g.moveTo(finishX + 30, fieldTop).lineTo(finishX + 30, fieldBottom).stroke({ color: 0x111111, width: 4, alpha: 0.9 });
+      for (let y = fieldTop; y < fieldBottom; y += checkSize) {
+        const row = Math.floor((y - fieldTop) / checkSize);
+        g.rect(finishX - 6, y, checkSize, checkSize).fill({ color: row % 2 === 0 ? 0xffffff : 0x111111 });
+        g.rect(finishX + 6, y, checkSize, checkSize).fill({ color: row % 2 === 0 ? 0x111111 : 0xffffff });
+      }
+
+      // Judge tower + judge figure near finish
+      const towerX = finishX + 46;
+      const towerBaseY = fieldTop - 10;
+      g.roundRect(towerX, towerBaseY - 56, 44, 56, 4).fill({ color: 0xf0ede2, alpha: 0.95 });
+      g.rect(towerX + 4, towerBaseY - 48, 36, 8).fill({ color: 0x8b2b1f, alpha: 0.95 });
+      g.rect(towerX + 8, towerBaseY - 35, 28, 20).fill({ color: 0xcfd6d1, alpha: 0.92 });
+      g.rect(towerX + 18, towerBaseY - 15, 8, 14).fill({ color: 0x46534d, alpha: 0.9 });
+
+      const judgeX = towerX + 22;
+      const judgeY = towerBaseY - 40;
+      g.circle(judgeX, judgeY, 4).fill({ color: 0xf2d0b0, alpha: 0.98 });
+      g.rect(judgeX - 3, judgeY + 4, 6, 10).fill({ color: 0x283944, alpha: 0.95 });
+      g.rect(judgeX + 3, judgeY + 5, 9, 2).fill({ color: 0xfff7c9, alpha: 0.95 });
+
+      // In-field label plates (so they don't disappear into the top background)
+      g.roundRect(startX - 48, fieldTop + 8, 96, 22, 5).fill({ color: 0x2f3430, alpha: 0.96 });
+      g.roundRect(finishX - 54, fieldTop + 8, 108, 22, 5).fill({ color: 0x2f3430, alpha: 0.96 });
+
+      for (let i = 0; i < 80; i++) {
+        const x = startX + (i / 79) * trackWidth;
+        const y = fieldTop + ((i * 37) % 1000) / 1000 * (fieldBottom - fieldTop);
+        g.circle(x, y, 1 + (i % 3)).fill({ color: 0x2f6d2a, alpha: 0.25 });
+      }
+    },
+    [width, height, lanes]
+  );
 
   return <pixiGraphics draw={drawTrack} />;
 };
 
-const AnimatedHorse = ({ horse, horseImageUrl, cameraRotation }: { horse: Horse, horseImageUrl?: string, cameraRotation: number }) => {
-  const containerRef = useRef<PIXI.Container>(null);
-
-  useTick(() => {
-    if (!containerRef.current) return;
-    
-    // To keep horse straight while track rotates, override total rotation
-    // Camera rotation + Horse rotation = 0 -> Horse rotation = -cameraRotation
-    containerRef.current.rotation = -cameraRotation;
+const CourseLabels = ({ width, height, lanes }: { width: number; height: number; lanes: number }) => {
+  const { fieldTop, startX, finishX } = getLayout(width, height, lanes);
+  const labelStyle = new PIXI.TextStyle({
+    fontFamily: 'Courier New',
+    fontSize: 11,
+    fontWeight: '900',
+    fill: 0xf8e7b8,
+    stroke: { color: 0x101010, width: 2 }
   });
 
-  const horseDraw = useCallback((g: PIXI.Graphics) => {
-    g.clear();
-    // Body
-    g.ellipse(0, 0, 15, 9).fill({ color: horse.color });
-    // Head
-    g.ellipse(12, -8, 6, 5).fill({ color: horse.color });
-    // Neck
-    g.rect(8, -6, 4, 8).fill({ color: horse.color });
-    // Legs
-    g.moveTo(-8, 6).lineTo(-9, 15);
-    g.moveTo(8, 6).lineTo(9, 15);
-    g.stroke({ width: 1.5, color: 0x000000, alpha: 0.5 });
-    // Saddle
-    g.rect(-4, -4, 8, 8).fill({ color: 0xffffff });
-  }, [horse.color]);
+  return (
+    <pixiContainer>
+      <pixiText {...({ text: 'START', x: startX, y: fieldTop + 19, anchor: 0.5, style: labelStyle } as any)} />
+      <pixiText {...({ text: 'FINISH', x: finishX, y: fieldTop + 19, anchor: 0.5, style: labelStyle } as any)} />
+    </pixiContainer>
+  );
+};
 
-  const transform = getTrackTransform(horse.position, horse.laneIdx);
+const HorseGifInstance = ({ url, tint }: { url: string; tint: number }) => {
+  const containerRef = useRef<PIXI.Container>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !PIXI.Assets.cache.has(url)) return;
+
+    const baseGif = PIXI.Assets.get(url);
+    if (!baseGif || (baseGif.width === 0 && baseGif.height === 0)) return;
+
+    const horseGif = baseGif.clone();
+    horseGif.anchor.set(0.5);
+    horseGif.scale.set(0.2);
+    horseGif.tint = tint;
+    horseGif.animationSpeed = 0.95;
+
+    container.addChild(horseGif);
+    horseGif.play();
+
+    return () => {
+      if (container) container.removeChild(horseGif);
+      horseGif.destroy({ children: true, texture: false, baseTexture: false });
+    };
+  }, [url, tint]);
+
+  return <pixiContainer ref={containerRef} />;
+};
+
+const FallbackHorse = ({ color }: { color: number }) => {
+  const drawHorse = useCallback(
+    (g: PIXI.Graphics) => {
+      g.clear();
+      g.ellipse(0, 0, 14, 8).fill({ color });
+      g.ellipse(12, -6, 5, 4).fill({ color });
+      g.rect(8, -5, 3, 7).fill({ color });
+      g.moveTo(-6, 6).lineTo(-7, 13);
+      g.moveTo(6, 6).lineTo(7, 13);
+      g.stroke({ width: 2, color: 0x141414, alpha: 0.55 });
+    },
+    [color]
+  );
+
+  return <pixiGraphics draw={drawHorse} />;
+};
+
+const AnimatedHorse = ({
+  horse,
+  elapsedMs,
+  horseImageUrl,
+  x,
+  y
+}: {
+  horse: Horse;
+  elapsedMs: number;
+  horseImageUrl?: string;
+  x: number;
+  y: number;
+}) => {
+  const speedBob = Math.sin(elapsedMs * 0.02 + horse.variation) * 1.2;
 
   return (
-    <pixiContainer ref={containerRef} x={transform.x} y={transform.y}>
-      {/* Background shadow */}
-      <pixiGraphics 
+    <pixiContainer x={x} y={y + speedBob}>
+      <pixiGraphics
         draw={(g) => {
-            g.clear();
-            g.ellipse(0, 10, 20, 8).fill({ color: 0x000000, alpha: 0.2 }); 
-        }} 
+          g.clear();
+          g.ellipse(0, 12, 14, 5).fill({ color: 0x000000, alpha: 0.2 });
+        }}
       />
 
-      {horseImageUrl && PIXI.Assets.cache.has(horseImageUrl) ? (
-         <HorseGifInstance url={horseImageUrl} />
-      ) : (
-         <pixiGraphics draw={horseDraw} />
-      )}
-      
-      {/* Number label */}
-      <pixiText 
+      {horseImageUrl && PIXI.Assets.cache.has(horseImageUrl) ? <HorseGifInstance url={horseImageUrl} tint={horse.color} /> : <FallbackHorse color={horse.color} />}
+
+      <pixiText
         {...({
+          text: horse.name,
+          x: 20,
+          y: -4,
+          anchor: 0.5,
+          style: new PIXI.TextStyle({
+            fontFamily: 'Courier New',
+            fontSize: 9,
+            fontWeight: '800',
+            fill: 0xffffff,
+            stroke: { color: 0x111111, width: 2.2 }
+          })
+        } as any)}
+      />
+
+      <pixiContainer x={0} y={-9}>
+        <pixiGraphics
+          draw={(g) => {
+            g.clear();
+            g.roundRect(-7, -7, 14, 14, 3).fill({ color: 0x101010, alpha: 0.84 });
+            g.roundRect(-6, -6, 12, 12, 3).stroke({ color: horse.color, width: 2 });
+          }}
+        />
+        <pixiText
+          {...({
             text: (horse.id + 1).toString(),
-            style: new PIXI.TextStyle({ 
-                fontSize: 14, 
-                fill: 0xffffff, 
-                fontWeight: 'bold',
-                stroke: { color: 0x000000, width: 3 }
-            }),
-            anchor: 0.5,
             x: 0,
-            y: -25
+            y: 0,
+            anchor: 0.5,
+            style: new PIXI.TextStyle({
+              fontFamily: 'Courier New',
+              fontSize: 8,
+              fontWeight: '900',
+              fill: 0xf8f8f8
+            })
+          } as any)}
+        />
+      </pixiContainer>
+    </pixiContainer>
+  );
+};
+
+const TopHud = ({ elapsedMs, width }: { elapsedMs: number; width: number }) => {
+  const drawPanel = useCallback(
+    (g: PIXI.Graphics) => {
+      g.clear();
+      g.rect(width * 0.34, 8, width * 0.32, WORLD.topHudHeight - 18).fill({ color: 0x7a1b18, alpha: 0.96 });
+      g.rect(width * 0.34, 8, width * 0.32, 7).fill({ color: 0x9f5f2a, alpha: 0.9 });
+      g.roundRect(width - 328, 10, 314, 58, 5).fill({ color: 0xd2d4cc, alpha: 0.96 });
+      g.roundRect(width - 324, 14, 306, 50, 5).stroke({ color: 0x39382f, width: 2, alpha: 0.55 });
+
+      const buttonW = 52;
+      const buttonGap = 14;
+      const startX = width * 0.34 + 68;
+      for (let i = 0; i < 3; i++) {
+        const x = startX + i * (buttonW + buttonGap);
+        g.roundRect(x, 20, buttonW, 40, 3).fill({ color: 0xe9c727 });
+        g.roundRect(x, 20, buttonW, 40, 3).stroke({ color: 0x2b2c28, width: 2 });
+      }
+
+      g.poly([startX + 18, 28, startX + 18, 52, startX + 37, 40]).fill({ color: 0x1e2331 });
+      const pauseX = startX + buttonW + buttonGap;
+      g.rect(pauseX + 16, 29, 7, 22).fill({ color: 0x1e2331 });
+      g.rect(pauseX + 30, 29, 7, 22).fill({ color: 0x1e2331 });
+      const ffX = pauseX + buttonW + buttonGap;
+      g.poly([ffX + 12, 28, ffX + 12, 52, ffX + 29, 40]).fill({ color: 0x1e2331 });
+      g.poly([ffX + 25, 28, ffX + 25, 52, ffX + 42, 40]).fill({ color: 0x1e2331 });
+    },
+    [width]
+  );
+
+  return (
+    <pixiContainer>
+      <pixiGraphics draw={drawPanel} />
+      <pixiText
+        {...({
+          text: `Off Time: ${formatRaceClock(elapsedMs)}`,
+          x: width - 170,
+          y: 40,
+          anchor: 0.5,
+          style: new PIXI.TextStyle({
+            fontFamily: 'Courier New',
+            fontSize: 28,
+            fontWeight: '900',
+            fill: 0x111111,
+            stroke: { color: 0xf0f0f0, width: 2 }
+          })
         } as any)}
       />
     </pixiContainer>
   );
 };
 
-const HorseGifInstance = ({ url }: { url: string }) => {
-    const containerRef = useRef<PIXI.Container>(null);
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container || !PIXI.Assets.cache.has(url)) return;
+const StandingsHud = ({
+  horses,
+  standings,
+  width,
+  height
+}: {
+  horses: Horse[];
+  standings: number[];
+  width: number;
+  height: number;
+}) => {
+  const horseMap = useMemo(() => {
+    const map = new Map<number, Horse>();
+    horses.forEach((horse) => map.set(horse.id, horse));
+    return map;
+  }, [horses]);
 
-        const baseGif = PIXI.Assets.get(url);
-        if (!baseGif || (baseGif.width === 0 && baseGif.height === 0)) return;
+  const drawStrip = useCallback(
+    (g: PIXI.Graphics) => {
+      g.clear();
+      g.roundRect(20, height - WORLD.bottomHudHeight, width - 40, WORLD.bottomHudHeight - 14, 3).fill({
+        color: 0x1f4a2c,
+        alpha: 0.7
+      });
+    },
+    [height, width]
+  );
 
-        const horseGif = baseGif.clone();
-        
-        horseGif.anchor.set(0.5);
-        horseGif.scale.set(0.4);
-        
-        container.addChild(horseGif);
-        horseGif.play();
+  return (
+    <pixiContainer>
+      <pixiGraphics draw={drawStrip} />
+      {standings.slice(0, 10).map((horseId, index) => {
+        const horse = horseMap.get(horseId);
+        if (!horse) return null;
+        const chipX = width - 54 - index * 44;
+        const chipY = height - 60;
 
-        return () => {
-            if (container) container.removeChild(horseGif);
-            horseGif.destroy({ children: true, texture: false, baseTexture: false });
-        };
-    }, [url]);
-
-    return <pixiContainer ref={containerRef} />;
-};
-
-const StartingGates = ({ lanes, isRacing }: { lanes: number, isRacing: boolean }) => {
-    const drawGates = useCallback((g: PIXI.Graphics) => {
-        g.clear();
-        const startX = -L/2;
-        const startY = R;
-        const startYEnd = R + lanes * LANE_WIDTH;
-
-        // Start Banner structure
-        g.rect(startX - 60, startY - 80, 120, Math.abs(startYEnd - startY) + 160).fill({ color: 0x222222, alpha: 0.8 });
-        
-        // Draw individual gates
-        for (let i = 0; i < lanes; i++) {
-             const cy = startY + i * LANE_WIDTH;
-             
-             // Back wall of gate
-             g.rect(startX - 40, cy, 30, LANE_WIDTH).fill({ color: 0x444444 });
-             
-             if (isRacing) {
-                 // Open gates - doors swing to side
-                 g.rect(startX + 20, cy + 5, 50, LANE_WIDTH - 10).fill({ color: 0xaaaaaa, alpha: 0.3 });
-             } else {
-                 // Closed front doors
-                 g.rect(startX + 20, cy + 2, 8, LANE_WIDTH - 4).fill({ color: 0xc0c0c0 });
-                 g.rect(startX + 28, cy + 2, 4, LANE_WIDTH - 4).fill({ color: 0xff4444 }); 
-             }
-        }
-    }, [lanes, isRacing]);
-
-    // Draw the banner text separately to ensure it is nicely rendered
-    return (
-        <pixiContainer>
-            <pixiGraphics draw={drawGates} />
-            <pixiText 
-                {...({
-                    text: "START",
-                    x: -L/2,
-                    y: R - 150,
-                    anchor: 0.5,
-                    rotation: -Math.PI / 2,
-                    style: new PIXI.TextStyle({ 
-                        fontSize: 80, 
-                        fill: 0xffffff, 
-                        fontWeight: 'bold',
-                        letterSpacing: 20
-                    })
-                } as any)}
+        return (
+          <pixiContainer key={horseId} x={chipX} y={chipY}>
+            <pixiGraphics
+              draw={(g) => {
+                g.clear();
+                g.rect(-17, -17, 34, 34).fill({ color: horse.color, alpha: 0.98 });
+                g.rect(-17, -17, 34, 34).stroke({ color: 0x151515, width: 3 });
+              }}
             />
-        </pixiContainer>
-    );
+            <pixiText
+              {...({
+                text: (horse.id + 1).toString(),
+                x: 0,
+                y: 0,
+                anchor: 0.5,
+                style: new PIXI.TextStyle({
+                  fontFamily: 'Courier New',
+                  fontSize: 22,
+                  fontWeight: '900',
+                  fill: 0x0f1012,
+                  stroke: { color: 0xf5f5f5, width: 2 }
+                })
+              } as any)}
+            />
+          </pixiContainer>
+        );
+      })}
+    </pixiContainer>
+  );
 };
 
 const RaceController = ({ update }: { update: (ticker: PIXI.Ticker) => void }) => {
@@ -348,23 +469,28 @@ const RaceController = ({ update }: { update: (ticker: PIXI.Ticker) => void }) =
   return null;
 };
 
-export const HorseRacingEngine = ({ onRaceFinish, onRaceUpdate, isRacing, horsesCount = 6, width, height, horseImageUrl }: HorseRacingEngineProps) => {
+export const HorseRacingEngine = ({
+  onRaceFinish,
+  onRaceUpdate,
+  isRacing,
+  horsesCount = 10,
+  width,
+  height,
+  horseImageUrl,
+  horseStrengths
+}: HorseRacingEngineProps) => {
   const [horses, setHorses] = useState<Horse[]>([]);
-  
-  // Pivot holds where the camera points IN WORLD SPACE
-  // Rotation holds camera tracking angle
-  const [cameraState, setCameraState] = useState({ pivotX: -L/2, pivotY: R + 100, rotation: 0 });
   const [isAssetsLoaded, setIsAssetsLoaded] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
+
   const finishedRef = useRef(false);
+  const horsesSimRef = useRef<Horse[]>([]);
   const onRaceFinishRef = useRef(onRaceFinish);
   const onRaceUpdateRef = useRef(onRaceUpdate);
+  const raceStartRef = useRef<number | null>(null);
+  const elapsedRef = useRef(0);
   const updateThrottleRef = useRef(0);
-  
-  // High-performance simulation refs to avoid React state update "in render" issues
-  const horsesSimRef = useRef<Horse[]>([]);
-  const cameraSimRef = useRef({ pivotX: -L/2, pivotY: R + 100, rotation: 0 });
-  const shakeRef = useRef<number>(0);
-  const dirtParticlesRef = useRef<{x: number, y: number, vx: number, vy: number, life: number, maxLife: number, size: number}[]>([]);
+  const dirtParticlesRef = useRef<{ x: number; y: number; vx: number; vy: number; life: number; maxLife: number; size: number }[]>([]);
   const dirtGraphicsRef = useRef<PIXI.Graphics>(null);
 
   useEffect(() => {
@@ -373,273 +499,214 @@ export const HorseRacingEngine = ({ onRaceFinish, onRaceUpdate, isRacing, horses
   }, [onRaceFinish, onRaceUpdate]);
 
   useEffect(() => {
-    const assetsToLoad = [ASSETS.DIRT, ASSETS.HORSE];
-    
-    PIXI.Assets.load(assetsToLoad).then(() => {
+    const horseAsset = horseImageUrl || ASSETS.HORSE;
+    PIXI.Assets.load([horseAsset, ASSETS.STANDS])
+      .then(() => setIsAssetsLoaded(true))
+      .catch((error) => {
+        console.error('Failed to load textures:', error);
         setIsAssetsLoaded(true);
-    }).catch(err => {
-        console.error("Failed to load textures:", err);
-        setIsAssetsLoaded(true); 
-    });
-  }, []);
+      });
+  }, [horseImageUrl]);
 
   useEffect(() => {
-    const initialHorses: Horse[] = Array.from({ length: horsesCount }).map((_, i) => ({
-      id: i,
-      name: `Horse ${i + 1}`,
-      color: PIXI.Color.shared.setValue([
-        0xff5555, 0x55ff55, 0x5555ff, 0xffff55, 0xff55ff, 0x55ffff, 0xffa500, 0x808080
-      ][i % 8]).toNumber(),
-      position: 0,
-      speed: 0,
-      acceleration: 0,
-      finishTime: null,
-      laneIdx: i,
-      variation: Math.random() * Math.PI * 2,
-      burstCooldown: Math.random() * 200
-    }));
-    setHorses(initialHorses);
-    horsesSimRef.current = initialHorses;
-    
-    // Position camera accurately at the start line
-    const startTrans = getTrackTransform(0, (horsesCount - 1) / 2);
-    const initialCam = { pivotX: startTrans.x, pivotY: startTrans.y, rotation: -startTrans.angle };
-    setCameraState(initialCam);
-    cameraSimRef.current = initialCam;
-    
-    finishedRef.current = false;
-  }, [horsesCount]);
-
-  useEffect(() => {
-    if (!isRacing && finishedRef.current) {
-        const resetHorses = horsesSimRef.current.map(h => ({ ...h, position: 0, speed: 0, finishTime: null }));
-        setHorses(resetHorses);
-        horsesSimRef.current = resetHorses;
-        
-        const startTrans = getTrackTransform(0, (horsesCount - 1) / 2);
-        const resetCam = { pivotX: startTrans.x, pivotY: startTrans.y, rotation: -startTrans.angle };
-        setCameraState(resetCam);
-        cameraSimRef.current = resetCam;
-        
-        finishedRef.current = false;
-    }
-  }, [isRacing, horsesCount]);
-
-  const updateHorses = useCallback((ticker: PIXI.Ticker) => {
-    if (!isRacing || finishedRef.current) return;
-    const delta = ticker.deltaTime;
-    const time = Date.now() * 0.001;
-
-    // Use sim ref instead of state to avoid "update during render"
-    const prev = horsesSimRef.current;
-    if (prev.length === 0) return;
-
-    const leaderPos = Math.max(...prev.map(h => h.position));
-    let nextLeaderPos = 0;
-    
-    const next = prev.map(h => {
-      if (h.finishTime) {
-          if (h.position > nextLeaderPos) nextLeaderPos = h.position;
-          return h;
-      }
-
-      const baseTargetSpeed = 16.0; 
-      let variance = Math.sin(time * 0.8 + h.variation) * 3.0;
-      const randomness = (Math.random() - 0.5) * 1.5;
-      
-      let acceleration = 0.1;
-      if (h.position < RACE_DISTANCE * 0.3) {
-          acceleration = 0.15;
-      } else if (h.position > RACE_DISTANCE * 0.8) {
-          acceleration = 0.2;
-          variance += 2.0; 
-      }
-
-      // Rubber banding comeback logic
-      const distanceToLeader = leaderPos - h.position;
-      const rubberBandEffect = Math.min(2.5, distanceToLeader / 500); 
-
-      let targetSpeed = baseTargetSpeed + variance + randomness + rubberBandEffect;
-      let newBurstCooldown = h.burstCooldown;
-      
-      if (newBurstCooldown > 0) {
-          newBurstCooldown -= delta;
-      } else {
-          const event = Math.random();
-          const isBehind = distanceToLeader > 200;
-          const isLeading = h.position >= leaderPos && leaderPos > 500;
-
-          const burstChance = isBehind ? 0.15 : 0.08;
-          const breakdownChance = isLeading ? 0.12 : 0.05;
-
-          if (event < burstChance) {
-              newBurstCooldown = 120 + Math.random() * 180;
-              targetSpeed += 5.0; 
-              shakeRef.current = 20; // Trigger camera shake
-          } else if (event < burstChance + breakdownChance) {
-              newBurstCooldown = 150 + Math.random() * 150;
-              targetSpeed -= 4.0; 
-          }
-      }
-
-      let newSpeed = h.speed + (targetSpeed - h.speed) * (acceleration * 0.12);
-      const newPos = h.position + newSpeed * delta;
-      
-      // --- Emit Dirt Particles ---
-      if (newSpeed > 5 && Math.random() > 0.4) {
-           const transform = getTrackTransform(newPos - 40, h.laneIdx);
-           const baseAngle = transform.angle + Math.PI; // point backwards
-           dirtParticlesRef.current.push({
-               x: transform.x,
-               y: transform.y,
-               vx: Math.cos(baseAngle) * (newSpeed * 0.15) + (Math.random()-0.5)*3,
-               vy: Math.sin(baseAngle) * (newSpeed * 0.15) + (Math.random()-0.5)*3,
-               life: 0,
-               maxLife: 15 + Math.random() * 15,
-               size: 5 + Math.random() * 8
-           });
-      }
-
-      if (newPos > nextLeaderPos) nextLeaderPos = newPos;
-
-      let finishTime = h.finishTime;
-      if (newPos >= RACE_DISTANCE && !finishTime) {
-          finishTime = Date.now();
-          shakeRef.current = 15; // Shake when crossing finish
-      }
-
+    const startHorses: Horse[] = Array.from({ length: horsesCount }).map((_, i) => {
+      const strength = horseStrengths?.[i] ?? 1;
       return {
-        ...h,
-        position: newPos,
-        speed: newSpeed,
-        finishTime,
-        burstCooldown: newBurstCooldown
+        id: i,
+        name: HORSE_NAMES[i] || `Derby ${i + 1}`,
+        color: PIXI.Color.shared.setValue(HORSE_COLORS[i % HORSE_COLORS.length]).toNumber(),
+        position: 0,
+        speed: 0,
+        acceleration: 0,
+        finishTime: null,
+        laneIdx: i,
+        variation: Math.random() * Math.PI * 2,
+        burstCooldown: 80 + Math.random() * 130,
+        startDelayMs: Math.random() * 380,
+        paceFactor: clamp(strength + (Math.random() - 0.5) * 0.05, 0.82, 1.22)
       };
     });
 
-    // Update sim ref
-    horsesSimRef.current = next;
+    setHorses(startHorses);
+    horsesSimRef.current = startHorses;
+    setElapsedMs(0);
+    elapsedRef.current = 0;
+    raceStartRef.current = null;
+    updateThrottleRef.current = 0;
+    dirtParticlesRef.current = [];
+    finishedRef.current = false;
+  }, [horsesCount, horseStrengths]);
 
-    // Camera Tracking System with Shake
-    const leaderTransform = getTrackTransform(nextLeaderPos, (horsesCount - 1) / 2);
-    const prevCam = cameraSimRef.current;
-    
-    let curShakeX = 0;
-    let curShakeY = 0;
-    if (shakeRef.current > 0) {
-        curShakeX = (Math.random() - 0.5) * shakeRef.current;
-        curShakeY = (Math.random() - 0.5) * shakeRef.current;
-        shakeRef.current -= delta * 0.8;
-        if (shakeRef.current < 0) shakeRef.current = 0;
+  useEffect(() => {
+    if (!isRacing && finishedRef.current) {
+      const reset = horsesSimRef.current.map((horse, idx) => {
+        const strength = horseStrengths?.[idx] ?? 1;
+        return {
+          ...horse,
+          position: 0,
+          speed: 0,
+          finishTime: null,
+          startDelayMs: Math.random() * 380,
+          paceFactor: clamp(strength + (Math.random() - 0.5) * 0.05, 0.82, 1.22)
+        };
+      });
+      horsesSimRef.current = reset;
+      setHorses(reset);
+      setElapsedMs(0);
+      elapsedRef.current = 0;
+      raceStartRef.current = null;
+      updateThrottleRef.current = 0;
+      dirtParticlesRef.current = [];
+      finishedRef.current = false;
     }
-    
-    const amt = 0.08; 
-    let rotDiff = -leaderTransform.angle - prevCam.rotation;
-    while (rotDiff > Math.PI) rotDiff -= Math.PI * 2;
-    while (rotDiff < -Math.PI) rotDiff += Math.PI * 2;
-    
-    const nextCam = {
-        pivotX: prevCam.pivotX + (leaderTransform.x - prevCam.pivotX) * amt + curShakeX,
-        pivotY: prevCam.pivotY + (leaderTransform.y - prevCam.pivotY) * amt + curShakeY,
-        rotation: prevCam.rotation + rotDiff * amt
-    };
-    cameraSimRef.current = nextCam;
+  }, [isRacing, horseStrengths]);
 
-    // Update States for rendering - separately and safely outside reducer
-    setHorses(next);
-    setCameraState(nextCam);
+  const updateRace = useCallback(
+    (ticker: PIXI.Ticker) => {
+      if (!isRacing || finishedRef.current) return;
 
-    // Update & Draw Dirt Particles
-    const dg = dirtGraphicsRef.current;
-    const particles = dirtParticlesRef.current;
-    if (dg) {
-        dg.clear();
-        for (let i = particles.length - 1; i >= 0; i--) {
-            const p = particles[i];
-            p.x += p.vx * delta;
-            p.y += p.vy * delta;
-            p.life += delta;
-            
-            if (p.life >= p.maxLife) {
-                particles.splice(i, 1);
-            } else {
-                const alpha = 1 - (p.life / p.maxLife);
-                dg.circle(p.x, p.y, p.size).fill({ color: 0x6d5b4f, alpha: alpha * 0.8 });
-            }
+      const delta = ticker.deltaTime;
+      const now = Date.now();
+      if (!raceStartRef.current) raceStartRef.current = now;
+
+      const elapsed = now - raceStartRef.current;
+      elapsedRef.current = elapsed;
+      setElapsedMs(elapsed);
+
+      const previous = horsesSimRef.current;
+      if (previous.length === 0) return;
+
+      const leaderPosition = Math.max(...previous.map((horse) => horse.position));
+      let nextLeaderPosition = 0;
+
+      const layout = getLayout(width, height, horsesCount);
+
+      const next = previous.map((horse) => {
+        if (horse.finishTime) {
+          if (horse.position > nextLeaderPosition) nextLeaderPosition = horse.position;
+          return horse;
         }
-    }
-    
-    // Dispatch live data to parent React UI using a throttle
-    updateThrottleRef.current += ticker.deltaMS;
-    if (updateThrottleRef.current > 100) {
+
+        const distanceToLeader = leaderPosition - horse.position;
+        const fieldBoost = Math.min(0.7, distanceToLeader / 900);
+        const phaseBias = horse.position > WORLD.raceDistance * 0.8 ? 1.8 : horse.position < WORLD.raceDistance * 0.2 ? 0.8 : 0;
+        const waveVariance = Math.sin(elapsed * 0.005 + horse.variation) * 1.4;
+        const randomVariance = (Math.random() - 0.5) * 0.7;
+
+        let targetSpeed = (8.3 + waveVariance + randomVariance + fieldBoost + phaseBias) * horse.paceFactor;
+        if (elapsed < horse.startDelayMs) targetSpeed = 0;
+
+        let cooldown = horse.burstCooldown - delta;
+        if (cooldown <= 0) {
+          const event = Math.random();
+          if (event < 0.1) {
+            targetSpeed += 2.8;
+            cooldown = 90 + Math.random() * 120;
+          } else if (event < 0.16) {
+            targetSpeed -= 2.2;
+            cooldown = 90 + Math.random() * 80;
+          } else {
+            cooldown = 60 + Math.random() * 80;
+          }
+        }
+
+        const speed = horse.speed + (targetSpeed - horse.speed) * 0.14;
+        const position = horse.position + speed * delta;
+
+        const laneCenterY = layout.fieldTop + (horse.laneIdx + 0.5) * layout.laneHeight;
+        if (speed > 4 && Math.random() > 0.5) {
+          dirtParticlesRef.current.push({
+            x: positionToTrackX(position, layout.startX, layout.trackWidth) - 22,
+            y: laneCenterY + 12,
+            vx: -Math.max(1.5, speed * 0.24) + (Math.random() - 0.5),
+            vy: (Math.random() - 0.5) * 1.1,
+            life: 0,
+            maxLife: 12 + Math.random() * 10,
+            size: 1.5 + Math.random() * 2.2
+          });
+        }
+
+        if (position > nextLeaderPosition) nextLeaderPosition = position;
+
+        return {
+          ...horse,
+          position,
+          speed,
+          finishTime: position >= WORLD.raceDistance ? now : null,
+          burstCooldown: cooldown
+        };
+      });
+
+      horsesSimRef.current = next;
+      setHorses(next);
+
+      const dirtLayer = dirtGraphicsRef.current;
+      const particles = dirtParticlesRef.current;
+      if (dirtLayer) {
+        dirtLayer.clear();
+        for (let index = particles.length - 1; index >= 0; index--) {
+          const particle = particles[index];
+          particle.x += particle.vx * delta;
+          particle.y += particle.vy * delta;
+          particle.life += delta;
+
+          if (particle.life >= particle.maxLife) {
+            particles.splice(index, 1);
+            continue;
+          }
+
+          const alpha = 1 - particle.life / particle.maxLife;
+          dirtLayer.circle(particle.x, particle.y, particle.size).fill({ color: 0x5c4a2d, alpha: alpha * 0.72 });
+        }
+      }
+
+      updateThrottleRef.current += ticker.deltaMS;
+      if (updateThrottleRef.current > 90) {
         updateThrottleRef.current = 0;
         if (onRaceUpdateRef.current) {
-             const progressPercent = Math.min(100, Math.max(0, (nextLeaderPos / RACE_DISTANCE) * 100));
-             onRaceUpdateRef.current([...next], progressPercent);
+          const standings = [...next].sort((a, b) => b.position - a.position).map((horse) => horse.id);
+          onRaceUpdateRef.current({
+            horses: [...next],
+            leaderProgress: clamp((nextLeaderPosition / WORLD.raceDistance) * 100, 0, 100),
+            elapsedMs: elapsedRef.current,
+            standings
+          });
         }
-    }
+      }
 
-    const finishedHorses = next.filter(h => h.finishTime !== null);
-    if (finishedHorses.length === next.length && !finishedRef.current) {
-      finishedRef.current = true;
-      const sorted = [...next].sort((a, b) => (a.finishTime || Infinity) - (b.finishTime || Infinity));
-      const winnerId = sorted[0].id;
-      
-      // Use timeout to defer parent notification and avoid "update during render" warning
-      setTimeout(() => {
+      const finishedHorses = next.filter((horse) => horse.finishTime !== null);
+      if (finishedHorses.length === next.length && !finishedRef.current) {
+        finishedRef.current = true;
+        const sortedByFinish = [...next].sort((a, b) => (a.finishTime || Infinity) - (b.finishTime || Infinity));
+        const winnerId = sortedByFinish[0].id;
+        setTimeout(() => {
           onRaceFinishRef.current(winnerId);
-      }, 0);
-    }
-  }, [isRacing, onRaceFinish, horsesCount]);
+        }, 0);
+      }
+    },
+    [isRacing, width, height, horsesCount]
+  );
+
+  const standings = useMemo(() => [...horses].sort((a, b) => b.position - a.position).map((horse) => horse.id), [horses]);
+  const layout = useMemo(() => getLayout(width, height, horsesCount), [width, height, horsesCount]);
 
   return (
-    <Application 
-        width={width} 
-        height={height} 
-        background={0x1f3a15}
-        antialias={true}
-        autoDensity={true}
-        resolution={window.devicePixelRatio || 1}
-    >
-      <RaceController update={updateHorses} />
-      <pixiContainer 
-        x={width * 0.3} 
-        y={height / 2}  
-        pivot={{ x: cameraState.pivotX, y: cameraState.pivotY }} 
-        rotation={cameraState.rotation}
-      >
-        <RaceTrack lanes={horsesCount} />
-        <StartingGates lanes={horsesCount} isRacing={isRacing || finishedRef.current} />
-        
-        {/* Dirt Particles layer (below horses) */}
-        <pixiGraphics ref={dirtGraphicsRef} draw={() => {}} />
-        
-        <pixiText 
-            {...({
-                text: "FINISH",
-                x: -L/2 + 1000,
-                y: -(R + (horsesCount * LANE_WIDTH) / 2),
-                anchor: 0.5,
-                rotation: Math.PI / 2,
-                style: new PIXI.TextStyle({ 
-                    fontSize: 100, 
-                    fill: 0xffaaaa, 
-                    fontWeight: '900',
-                    letterSpacing: 25,
-                    stroke: { color: 0x000000, width: 8 }
-                })
-            } as any)}
-        />
+    <Application width={width} height={height} background={0x122015} antialias autoDensity resolution={window.devicePixelRatio || 1}>
+      <RaceController update={updateRace} />
 
-        {isAssetsLoaded && horses.map((h, i) => (
-          <AnimatedHorse 
-            key={h.id} 
-            horse={h} 
-            horseImageUrl={ASSETS.HORSE} 
-            cameraRotation={cameraState.rotation}
-          />
-        ))}
-      </pixiContainer>
+      <StadiumBackdrop width={width} topAreaHeight={layout.topAreaHeight} isAssetsLoaded={isAssetsLoaded} />
+      <TrackLayer width={width} height={height} lanes={horsesCount} />
+      <CourseLabels width={width} height={height} lanes={horsesCount} />
+      <pixiGraphics ref={dirtGraphicsRef} draw={() => {}} />
+
+      {horses.map((horse) => {
+        const x = positionToTrackX(horse.position, layout.startX, layout.trackWidth);
+        const y = layout.fieldTop + (horse.laneIdx + 0.5) * layout.laneHeight;
+        return <AnimatedHorse key={horse.id} horse={horse} elapsedMs={elapsedMs} horseImageUrl={horseImageUrl || ASSETS.HORSE} x={x} y={y} />;
+      })}
+
+      <TopHud elapsedMs={elapsedMs} width={width} />
+      <StandingsHud horses={horses} standings={standings} width={width} height={height} />
     </Application>
   );
 };
